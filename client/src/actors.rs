@@ -7,7 +7,7 @@ mod snapshot;
 
 pub use self::{
     client::{ProcResult, Procedure, SHRequest, SHResults, SLIP10DeriveInput},
-    internal::{InternalActor, InternalMsg, InternalResults},
+    internal::{InternalActor, InternalMsg, InternalResults, Sr25519GenerateInput},
     snapshot::SMsg,
 };
 

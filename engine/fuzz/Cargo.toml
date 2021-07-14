@@ -18,7 +18,8 @@ path = "../"
 version = "0.4"
 
 [dependencies.iota-crypto]
-version = "0.5.0"
+git = "https://tributary.semantic-network.tech/semnet/crypto.rs"
+branch = "feat/sr25519"
 features = [ "random", "chacha" ]
 
 [dependencies.generic-array]
