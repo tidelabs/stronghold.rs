@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    actors::{InternalMsg, InternalResults, SMsg, Sr25519GenerateInput as Sr25519GenerateInputInternal},
+    actors::{InternalMsg, InternalResults, SMsg},
     line_error,
     state::client::{Client, ClientMsg},
     utils::{ResultMessage, StatusMessage},
@@ -42,15 +42,6 @@ pub enum SLIP10DeriveInput {
     /// Note that BIP39 seeds are allowed to be used as SLIP10 seeds
     Seed(Location),
     Key(Location),
-}
-
-/// `Sr25519Generate` procedure input.
-#[derive(GuardDebug, Clone, Serialize, Deserialize)]
-pub enum Sr25519GenerateInput {
-    /// Generate a sr25519 key pair from the specified mnemonic string.
-    Mnemonic(String),
-    /// Generate a sr25519 key pair from the mnemonic generated with `BIP39Generate` stored on the specified location.
-    GeneratedBIP39(Location),
 }
 
 /// Procedure type used to call to the runtime via `Strongnhold.runtime_exec(...)`.
@@ -109,10 +100,10 @@ pub enum Procedure {
         output: Location,
         hint: RecordHint,
     },
-    /// Generate a BIP39 seed and its corresponding mnemonic sentence (optionally protected by a
+    /// Generate a sr25519 key pair and its corresponding mnemonic sentence (optionally protected by a
     /// passphrase) and store them in the `output` location.
     Sr25519Generate {
-        input: Option<Sr25519GenerateInput>,
+        mnemonic: Option<String>,
         passphrase: Option<String>,
         output: Location,
         hint: RecordHint,
@@ -751,9 +742,7 @@ impl Receive<SHRequest> for Client {
                             sender,
                         )
                     }
-                    //
                     // sr25519 procedures
-                    //
                     Procedure::Sr25519Derive {
                         chain,
                         input,
@@ -782,7 +771,7 @@ impl Receive<SHRequest> for Client {
                         )
                     }
                     Procedure::Sr25519Generate {
-                        input,
+                        mnemonic,
                         passphrase,
                         output,
                         hint,
@@ -793,17 +782,9 @@ impl Receive<SHRequest> for Client {
                             self.add_new_vault(vault_id);
                         }
 
-                        let input = input.map(|i| match i {
-                            Sr25519GenerateInput::GeneratedBIP39(location) => {
-                                let (vault_id, record_id) = self.resolve_location(location);
-                                Sr25519GenerateInputInternal::GeneratedBIP39(vault_id, record_id)
-                            }
-                            Sr25519GenerateInput::Mnemonic(m) => Sr25519GenerateInputInternal::Mnemonic(m),
-                        });
-
                         internal.try_tell(
                             InternalMsg::Sr25519Generate {
-                                input,
+                                mnemonic,
                                 passphrase: passphrase.unwrap_or_else(|| "".into()),
                                 vault_id,
                                 record_id,

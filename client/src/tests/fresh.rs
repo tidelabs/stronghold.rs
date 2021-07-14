@@ -1,7 +1,7 @@
 // Copyright 2021 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-use crypto::{keys::slip10::Chain, utils::rand::fill};
+use crypto::{keys::slip10::Chain, signatures::sr25519::DeriveJunction, utils::rand::fill};
 pub use stronghold_utils::test_utils::{self, fresh::*};
 
 use crate::{Location, RecordHint};
@@ -37,4 +37,17 @@ pub fn hd_path() -> (String, Chain) {
         is.push(i);
     }
     (s, Chain::from_u32_hardened(is))
+}
+
+pub fn sr25519_chain() -> Vec<DeriveJunction> {
+    let mut chain = Vec::new();
+    while coinflip() {
+        let b = rand::random::<[u8; 32]>();
+        chain.push(if coinflip() {
+            DeriveJunction::Hard(b)
+        } else {
+            DeriveJunction::Soft(b)
+        });
+    }
+    chain
 }

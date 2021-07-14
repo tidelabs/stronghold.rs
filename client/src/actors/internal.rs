@@ -44,12 +44,6 @@ pub struct InternalActor<P: BoxProvider + Send + Sync + Clone + 'static> {
     db: DbView<P>,
 }
 
-#[derive(Clone, GuardDebug)]
-pub enum Sr25519GenerateInput {
-    Mnemonic(String),
-    GeneratedBIP39(VaultId, RecordId),
-}
-
 /// Messages used for the Internal Actor.
 #[derive(Clone, GuardDebug)]
 pub enum InternalMsg {
@@ -149,7 +143,7 @@ pub enum InternalMsg {
     },
     /// [`Sr25519Generate`] Proc
     Sr25519Generate {
-        input: Option<Sr25519GenerateInput>,
+        mnemonic: Option<String>,
         passphrase: String,
         vault_id: VaultId,
         record_id: RecordId,
@@ -810,7 +804,7 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                 }
             }
             InternalMsg::Sr25519Generate {
-                input,
+                mnemonic,
                 passphrase,
                 vault_id,
                 record_id,
@@ -819,34 +813,8 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                 let cstr: String = self.client_id.into();
                 let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
 
-                let keypair = match input {
-                    Some(Sr25519GenerateInput::Mnemonic(m)) => sr25519::KeyPair::from_mnemonic(&m, Some(&passphrase)),
-                    Some(Sr25519GenerateInput::GeneratedBIP39(vid, rid)) => {
-                        if let Some(key) = self.keystore.get_key(vid) {
-                            let mut data: Vec<u8> = Vec::new();
-
-                            self.db
-                                .get_guard(&key, vid, rid, |gdata| {
-                                    let gdata = gdata.borrow();
-                                    data.extend_from_slice(&*gdata);
-
-                                    Ok(())
-                                })
-                                .expect(line_error!());
-
-                            self.keystore.insert_key(vid, key);
-
-                            Ok(sr25519::KeyPair::from_seed(&data))
-                        } else {
-                            client.try_tell(
-                                ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Error(
-                                    "generated bip39 not found on provided location".into(),
-                                ))),
-                                sender,
-                            );
-                            return;
-                        }
-                    }
+                let keypair = match mnemonic {
+                    Some(m) => sr25519::KeyPair::from_mnemonic(&m, Some(&passphrase)),
                     None => {
                         let mut entropy = [0u8; 32];
                         fill(&mut entropy).expect(line_error!());
@@ -872,7 +840,7 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                 match keypair {
                     Ok(keypair) => {
                         self.db
-                            .write(&key, vault_id, record_id, keypair.seed(), hint)
+                            .write(&key, vault_id, record_id, &keypair.seed(), hint)
                             .expect(line_error!());
 
                         client.try_tell(
@@ -903,7 +871,7 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                         .get_guard(&key, vault_id, record_id, |data| {
                             let raw = data.borrow();
 
-                            if raw.len() != 32 {
+                            if raw.len() != 64 {
                                 client.try_tell(
                                     ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
                                         ProcResult::Sr25519PublicKey(ResultMessage::Error(
@@ -950,7 +918,7 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                         .get_guard(&pkey, vault_id, record_id, |data| {
                             let raw = data.borrow();
 
-                            if raw.len() != 32 {
+                            if raw.len() != 64 {
                                 client.try_tell(
                                     ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
                                         ProcResult::Sr25519Sign(ResultMessage::Error(

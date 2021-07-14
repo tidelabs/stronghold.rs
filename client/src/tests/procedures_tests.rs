@@ -3,6 +3,7 @@
 
 #![allow(non_snake_case)]
 
+use crypto::{keys::bip39, utils::rand::fill};
 use riker::actors::ActorSystem;
 
 use crate::{ProcResult, Procedure, ResultMessage, SLIP10DeriveInput, Stronghold};
@@ -141,4 +142,70 @@ fn usecase_SLIP10Derive_intermediate_keys() {
     };
 
     assert_eq!(cc0, cc1);
+}
+
+#[test]
+fn usecase_sr25519() {
+    let (_cp, sh) = setup_stronghold();
+
+    let seed = fresh::location();
+
+    match futures::executor::block_on(sh.runtime_exec(Procedure::Sr25519Generate {
+        mnemonic: if fresh::coinflip() {
+            let mut entropy = [0u8; 32];
+            fill(&mut entropy).unwrap();
+
+            let mnemonic = bip39::wordlist::encode(&entropy, &bip39::wordlist::ENGLISH).unwrap();
+
+            Some(mnemonic.to_string())
+        } else {
+            None
+        },
+        passphrase: if fresh::coinflip() {
+            Some("password".into())
+        } else {
+            None
+        },
+        output: seed.clone(),
+        hint: fresh::record_hint(),
+    })) {
+        ProcResult::Sr25519Generate(ResultMessage::OK) => (),
+        r => panic!("unexpected result: {:?}", r),
+    }
+
+    let chain = fresh::sr25519_chain();
+    let key = fresh::location();
+
+    match futures::executor::block_on(sh.runtime_exec(Procedure::Sr25519Derive {
+        chain,
+        input: seed.clone(),
+        output: key.clone(),
+        hint: fresh::record_hint(),
+    })) {
+        ProcResult::Sr25519Derive(ResultMessage::OK) => (),
+        r => panic!("unexpected result: {:?}", r),
+    };
+
+    for keypair in vec![key, seed] {
+        let pk = match futures::executor::block_on(sh.runtime_exec(Procedure::Sr25519PublicKey {
+            keypair: keypair.clone(),
+        })) {
+            ProcResult::Sr25519PublicKey(ResultMessage::Ok(pk)) => pk,
+            r => panic!("unexpected result: {:?}", r),
+        };
+
+        let msg = fresh::bytestring();
+
+        let sig = match futures::executor::block_on(sh.runtime_exec(Procedure::Sr25519Sign {
+            keypair,
+            msg: msg.clone(),
+        })) {
+            ProcResult::Sr25519Sign(ResultMessage::Ok(sig)) => sig,
+            r => panic!("unexpected result: {:?}", r),
+        };
+
+        {
+            assert!(pk.verify(&sig, &msg));
+        }
+    }
 }
