@@ -27,7 +27,7 @@ features = ["full"]
 
 [dependencies.iota-crypto]
 git = "https://tributary.semantic-network.tech/semnet/crypto.rs"
-branch = "feat/sr25519"
+branch = "dev"
 features = [ "random", "chacha" ]
 
 [dependencies.log]
