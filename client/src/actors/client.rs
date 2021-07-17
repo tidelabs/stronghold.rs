@@ -13,9 +13,15 @@ use stronghold_utils::GuardDebug;
 
 use crypto::{
     keys::slip10::{Chain, ChainCode},
-    signatures::sr25519::{
-        PublicKey as Sr25519PublicKey, Signature as Sr25519Signature, PUBLIC_KEY_LENGTH as SR25519_PUBLIC_KEY_LENGTH,
-        SIGNATURE_LENGTH as SR25519_SIGNATURE_LENGTH,
+    signatures::{
+        secp256k1::{
+            PublicKey as Secp256k1PublicKey, RecoveryId as Secp256k1RecoveryId, Signature as Secp256k1Signature,
+            PUBLIC_KEY_LENGTH as SECP256K1_PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH as SECP256K1_SIGNATURE_LENGTH,
+        },
+        sr25519::{
+            PublicKey as Sr25519PublicKey, Signature as Sr25519Signature,
+            PUBLIC_KEY_LENGTH as SR25519_PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH as SR25519_SIGNATURE_LENGTH,
+        },
     },
 };
 
@@ -113,6 +119,13 @@ pub enum Procedure {
     Sr25519PublicKey { keypair: Location },
     /// Use the specified Sr25519 keypair to sign the given message.
     Sr25519Sign { keypair: Location, msg: Vec<u8> },
+
+    /// Generate a secp256k1 secret key and store them in the `output` location.
+    Secp256k1Generate { output: Location, hint: RecordHint },
+    /// Gets the public key associated with the secp256k1 secret key stored on the given location.
+    Secp256k1PublicKey { private_key: Location },
+    /// Use the specified secp256k1 secret key to sign the given message.
+    Secp256k1Sign { private_key: Location, msg: Box<[u8; 32]> },
 }
 
 /// A Procedure return result type.  Contains the different return values for the `Procedure` type calls used with
@@ -144,6 +157,12 @@ pub enum ProcResult {
     Sr25519PublicKey(ResultMessage<Sr25519PublicKey>),
     /// Return value for `Sr25519Sign`. Returns an sr25519 signature.
     Sr25519Sign(ResultMessage<Sr25519Signature>),
+    /// `Secp256k1Generate` return value.
+    Secp256k1Generate(StatusMessage),
+    /// Return value for `Secp256k1PublicKey`. Returns a secp256k1 public key.
+    Secp256k1PublicKey(ResultMessage<Secp256k1PublicKey>),
+    /// Return value for `Secp256k1Sign`. Returns a secp256k1 signature.
+    Secp256k1Sign(ResultMessage<(Secp256k1Signature, Secp256k1RecoveryId)>),
     /// Generic Error return message.
     Error(String),
 }
@@ -188,6 +207,26 @@ impl TryFrom<SerdeProcResult> for ProcResult {
                 };
                 Ok(ProcResult::Sr25519Sign(msg))
             }
+            SerdeProcResult::Secp256k1Generate(msg) => Ok(ProcResult::Secp256k1Generate(msg)),
+            SerdeProcResult::Secp256k1PublicKey(msg) => {
+                let msg: ResultMessage<Secp256k1PublicKey> = match msg {
+                    ResultMessage::Ok(v) => ResultMessage::Ok(
+                        Secp256k1PublicKey::from_bytes(v.as_slice().try_into()?).expect(line_error!()),
+                    ),
+                    ResultMessage::Error(e) => ResultMessage::Error(e),
+                };
+                Ok(ProcResult::Secp256k1PublicKey(msg))
+            }
+            SerdeProcResult::Secp256k1Sign(r) => {
+                let msg: ResultMessage<(Secp256k1Signature, Secp256k1RecoveryId)> = match r {
+                    ResultMessage::Ok((sig, recovery_id)) => ResultMessage::Ok((
+                        Secp256k1Signature::from_bytes(sig.as_slice().try_into()?).expect(line_error!()),
+                        Secp256k1RecoveryId::from_u8(recovery_id).expect(line_error!()),
+                    )),
+                    ResultMessage::Error(e) => ResultMessage::Error(e),
+                };
+                Ok(ProcResult::Secp256k1Sign(msg))
+            }
             SerdeProcResult::Error(err) => Ok(ProcResult::Error(err)),
         }
     }
@@ -207,6 +246,9 @@ enum SerdeProcResult {
     Sr25519Generate(StatusMessage),
     Sr25519PublicKey(ResultMessage<Vec<u8>>),
     Sr25519Sign(ResultMessage<Vec<u8>>),
+    Secp256k1Generate(StatusMessage),
+    Secp256k1PublicKey(ResultMessage<Vec<u8>>),
+    Secp256k1Sign(ResultMessage<(Vec<u8>, u8)>),
     Error(String),
 }
 
@@ -253,6 +295,27 @@ impl From<ProcResult> for SerdeProcResult {
                     ResultMessage::Error(error) => ResultMessage::Error(error),
                 };
                 SerdeProcResult::Sr25519Sign(msg)
+            }
+            ProcResult::Secp256k1Generate(msg) => SerdeProcResult::Secp256k1Generate(msg),
+            ProcResult::Secp256k1PublicKey(msg) => {
+                let msg = match msg {
+                    ResultMessage::Ok(public_key) => {
+                        let raw: [u8; SECP256K1_PUBLIC_KEY_LENGTH] = public_key.to_bytes();
+                        ResultMessage::Ok(raw.to_vec())
+                    }
+                    ResultMessage::Error(error) => ResultMessage::Error(error),
+                };
+                SerdeProcResult::Secp256k1PublicKey(msg)
+            }
+            ProcResult::Secp256k1Sign(msg) => {
+                let msg = match msg {
+                    ResultMessage::Ok((signature, recovery_id)) => {
+                        let raw: [u8; SECP256K1_SIGNATURE_LENGTH] = signature.to_bytes();
+                        ResultMessage::Ok((raw.to_vec(), recovery_id.as_u8()))
+                    }
+                    ResultMessage::Error(error) => ResultMessage::Error(error),
+                };
+                SerdeProcResult::Secp256k1Sign(msg)
             }
             ProcResult::Error(err) => SerdeProcResult::Error(err),
         }
@@ -801,6 +864,38 @@ impl Receive<SHRequest> for Client {
                         let (vault_id, record_id) = self.resolve_location(keypair);
                         internal.try_tell(
                             InternalMsg::Sr25519Sign {
+                                vault_id,
+                                record_id,
+                                msg,
+                            },
+                            sender,
+                        )
+                    }
+                    // secp256k1
+                    Procedure::Secp256k1Generate { output, hint } => {
+                        let (vault_id, record_id) = self.resolve_location(output);
+
+                        if self.vault_exist(vault_id).is_none() {
+                            self.add_new_vault(vault_id);
+                        }
+
+                        internal.try_tell(
+                            InternalMsg::Secp256k1Generate {
+                                vault_id,
+                                record_id,
+                                hint,
+                            },
+                            sender,
+                        )
+                    }
+                    Procedure::Secp256k1PublicKey { private_key } => {
+                        let (vault_id, record_id) = self.resolve_location(private_key);
+                        internal.try_tell(InternalMsg::Secp256k1PublicKey { vault_id, record_id }, sender)
+                    }
+                    Procedure::Secp256k1Sign { private_key, msg } => {
+                        let (vault_id, record_id) = self.resolve_location(private_key);
+                        internal.try_tell(
+                            InternalMsg::Secp256k1Sign {
                                 vault_id,
                                 record_id,
                                 msg,

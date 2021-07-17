@@ -39,7 +39,8 @@ features = [
 "hmac",
 "bip39-en",
 "slip10",
-"chacha"
+"chacha",
+"secp256k1"
 ]
 
 [dependencies.stronghold-communication]

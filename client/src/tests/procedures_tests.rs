@@ -209,3 +209,41 @@ fn usecase_sr25519() {
         }
     }
 }
+
+#[test]
+fn usecase_secp256k1() {
+    let (_cp, sh) = setup_stronghold();
+
+    let seed = fresh::location();
+
+    match futures::executor::block_on(sh.runtime_exec(Procedure::Secp256k1Generate {
+        output: seed.clone(),
+        hint: fresh::record_hint(),
+    })) {
+        ProcResult::Secp256k1Generate(ResultMessage::OK) => (),
+        r => panic!("unexpected result: {:?}", r),
+    }
+
+    let pk = match futures::executor::block_on(sh.runtime_exec(Procedure::Secp256k1PublicKey {
+        private_key: seed.clone(),
+    })) {
+        ProcResult::Secp256k1PublicKey(ResultMessage::Ok(pk)) => pk,
+        r => panic!("unexpected result: {:?}", r),
+    };
+
+    let msg = rand::random();
+
+    let (sig, recovery_id) = match futures::executor::block_on(sh.runtime_exec(Procedure::Secp256k1Sign {
+        private_key: seed,
+        msg: Box::new(msg),
+    })) {
+        ProcResult::Secp256k1Sign(ResultMessage::Ok(sig)) => sig,
+        r => panic!("unexpected result: {:?}", r),
+    };
+
+    {
+        assert!(pk.verify(&msg, &sig));
+        let p = crypto::signatures::secp256k1::PublicKey::recover(&msg, &sig, &recovery_id).unwrap();
+        assert_eq!(pk, p);
+    }
+}
