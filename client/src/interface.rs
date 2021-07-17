@@ -3,13 +3,14 @@
 
 use riker::actors::*;
 
-use futures::{
-    channel::mpsc::{channel, Receiver, Sender},
-    future::RemoteHandle,
-};
+use futures::future::RemoteHandle;
 
 #[cfg(feature = "communication")]
-use futures::{executor::block_on, StreamExt};
+use futures::{
+    channel::mpsc::{channel, Receiver, Sender},
+    executor::block_on,
+    StreamExt,
+};
 
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 use zeroize::Zeroize;

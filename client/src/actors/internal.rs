@@ -20,7 +20,7 @@ use crypto::{
         bip39,
         slip10::{self, Chain, Curve, Seed},
     },
-    signatures::ed25519,
+    signatures::{ed25519, sr25519},
     utils::rand::fill,
 };
 
@@ -127,6 +127,32 @@ pub enum InternalMsg {
     Ed25519PublicKey { vault_id: VaultId, record_id: RecordId },
     /// [`Ed25519Sign`] Proc
     Ed25519Sign {
+        vault_id: VaultId,
+        record_id: RecordId,
+        msg: Vec<u8>,
+    },
+
+    /// [`Sr25519erive`] Proc
+    Sr25519Derive {
+        chain: Vec<sr25519::DeriveJunction>,
+        seed_vault_id: VaultId,
+        seed_record_id: RecordId,
+        key_vault_id: VaultId,
+        key_record_id: RecordId,
+        hint: RecordHint,
+    },
+    /// [`Sr25519Generate`] Proc
+    Sr25519Generate {
+        mnemonic: Option<String>,
+        passphrase: String,
+        vault_id: VaultId,
+        record_id: RecordId,
+        hint: RecordHint,
+    },
+    /// [`Sr25519PublicKey`] Proc
+    Sr25519PublicKey { vault_id: VaultId, record_id: RecordId },
+    /// [`Sr25519Sign`] Proc
+    Sr25519Sign {
         vault_id: VaultId,
         record_id: RecordId,
         msg: Vec<u8>,
@@ -715,6 +741,217 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                     )
                 }
             }
+
+            // sr25519
+            InternalMsg::Sr25519Derive {
+                chain,
+                seed_vault_id,
+                seed_record_id,
+                key_vault_id,
+                key_record_id,
+                hint,
+            } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+
+                match self.keystore.get_key(seed_vault_id) {
+                    Some(seed_key) => {
+                        self.keystore.insert_key(seed_vault_id, seed_key.clone());
+                        let dk_key = if !self.keystore.vault_exists(key_vault_id) {
+                            let key = self.keystore.create_key(key_vault_id);
+                            self.db.init_vault(&key, key_vault_id).expect(line_error!());
+
+                            key
+                        } else {
+                            self.keystore.get_key(key_vault_id).expect(line_error!())
+                        };
+                        self.keystore.insert_key(key_vault_id, dk_key.clone());
+
+                        self.db
+                            .exec_proc(
+                                &seed_key,
+                                seed_vault_id,
+                                seed_record_id,
+                                &dk_key,
+                                key_vault_id,
+                                key_record_id,
+                                hint,
+                                |gdata| {
+                                    let dk = sr25519::KeyPair::from_seed(&gdata.borrow())
+                                        .derive(chain.into_iter(), None)
+                                        .expect(line_error!());
+
+                                    let data = dk.seed().to_vec();
+
+                                    client.try_tell(
+                                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                            ProcResult::Sr25519Derive(StatusMessage::OK),
+                                        )),
+                                        sender,
+                                    );
+
+                                    Ok(data)
+                                },
+                            )
+                            .expect(line_error!());
+                    }
+                    _ => client.try_tell(
+                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Sr25519Derive(
+                            ResultMessage::Error("Failed to access vault".into()),
+                        ))),
+                        sender,
+                    ),
+                }
+            }
+            InternalMsg::Sr25519Generate {
+                mnemonic,
+                passphrase,
+                vault_id,
+                record_id,
+                hint,
+            } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+
+                let keypair = match mnemonic {
+                    Some(m) => sr25519::KeyPair::from_mnemonic(&m, Some(&passphrase)),
+                    None => {
+                        let mut entropy = [0u8; 32];
+                        fill(&mut entropy).expect(line_error!());
+
+                        let mnemonic =
+                            bip39::wordlist::encode(&entropy, &bip39::wordlist::ENGLISH).expect(line_error!());
+
+                        sr25519::KeyPair::from_mnemonic(&mnemonic, Some(&passphrase))
+                    }
+                };
+
+                let key = if !self.keystore.vault_exists(vault_id) {
+                    let k = self.keystore.create_key(vault_id);
+                    self.db.init_vault(&k, vault_id).expect(line_error!());
+
+                    k
+                } else {
+                    self.keystore.get_key(vault_id).expect(line_error!())
+                };
+
+                self.keystore.insert_key(vault_id, key.clone());
+
+                match keypair {
+                    Ok(keypair) => {
+                        self.db
+                            .write(&key, vault_id, record_id, &keypair.seed(), hint)
+                            .expect(line_error!());
+
+                        client.try_tell(
+                            ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                ProcResult::Sr25519Generate(StatusMessage::OK),
+                            )),
+                            sender,
+                        );
+                    }
+                    Err(e) => {
+                        client.try_tell(
+                            ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Error(
+                                format!("failed to generate key pair: {}", e.to_string()),
+                            ))),
+                            sender,
+                        );
+                    }
+                }
+            }
+            InternalMsg::Sr25519PublicKey { vault_id, record_id } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+
+                if let Some(key) = self.keystore.get_key(vault_id) {
+                    self.keystore.insert_key(vault_id, key.clone());
+
+                    self.db
+                        .get_guard(&key, vault_id, record_id, |data| {
+                            let raw = data.borrow();
+
+                            if raw.len() != 64 {
+                                client.try_tell(
+                                    ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                        ProcResult::Sr25519PublicKey(ResultMessage::Error(
+                                            "Incorrect number of key bytes".into(),
+                                        )),
+                                    )),
+                                    sender.clone(),
+                                );
+                            }
+
+                            let keypair = sr25519::KeyPair::from_seed(&raw);
+                            let pk = keypair.public_key();
+
+                            client.try_tell(
+                                ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                    ProcResult::Sr25519PublicKey(ResultMessage::Ok(pk)),
+                                )),
+                                sender,
+                            );
+
+                            Ok(())
+                        })
+                        .expect(line_error!());
+                } else {
+                    client.try_tell(
+                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                            ProcResult::Sr25519PublicKey(ResultMessage::Error("Failed to access vault".into())),
+                        )),
+                        sender,
+                    )
+                }
+            }
+            InternalMsg::Sr25519Sign {
+                vault_id,
+                record_id,
+                msg,
+            } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+                if let Some(pkey) = self.keystore.get_key(vault_id) {
+                    self.keystore.insert_key(vault_id, pkey.clone());
+
+                    self.db
+                        .get_guard(&pkey, vault_id, record_id, |data| {
+                            let raw = data.borrow();
+
+                            if raw.len() != 64 {
+                                client.try_tell(
+                                    ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                        ProcResult::Sr25519Sign(ResultMessage::Error(
+                                            "incorrect number of key bytes".into(),
+                                        )),
+                                    )),
+                                    sender.clone(),
+                                );
+                            }
+
+                            let keypair = sr25519::KeyPair::from_seed(&raw);
+                            let sig = keypair.sign(&msg);
+
+                            client.try_tell(
+                                ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                    ProcResult::Sr25519Sign(ResultMessage::Ok(sig)),
+                                )),
+                                sender,
+                            );
+
+                            Ok(())
+                        })
+                        .expect(line_error!());
+                } else {
+                    client.try_tell(
+                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Sr25519Sign(
+                            ResultMessage::Error("Failed to access vault".into()),
+                        ))),
+                        sender,
+                    )
+                }
+            }
+
             InternalMsg::FillSnapshot { client } => {
                 let snapshot = ctx.select("/user/snapshot/").expect(line_error!());
 

@@ -11,7 +11,13 @@ use crate::{
 
 use stronghold_utils::GuardDebug;
 
-use crypto::keys::slip10::{Chain, ChainCode};
+use crypto::{
+    keys::slip10::{Chain, ChainCode},
+    signatures::sr25519::{
+        PublicKey as Sr25519PublicKey, Signature as Sr25519Signature, PUBLIC_KEY_LENGTH as SR25519_PUBLIC_KEY_LENGTH,
+        SIGNATURE_LENGTH as SR25519_SIGNATURE_LENGTH,
+    },
+};
 
 use engine::{
     snapshot,
@@ -86,6 +92,27 @@ pub enum Procedure {
     /// Compatible keys are any record that contain the desired key material in the first 32 bytes,
     /// in particular SLIP10 keys are compatible.
     Ed25519Sign { private_key: Location, msg: Vec<u8> },
+
+    /// Derive a sr25519 child key from a sr25519 key pair and store it in output location.
+    Sr25519Derive {
+        chain: Vec<crypto::signatures::sr25519::DeriveJunction>,
+        input: Location,
+        output: Location,
+        hint: RecordHint,
+    },
+    /// Generate a sr25519 key pair and its corresponding mnemonic sentence (optionally protected by a
+    /// passphrase) and store them in the `output` location.
+    Sr25519Generate {
+        mnemonic: Option<String>,
+        passphrase: Option<String>,
+        output: Location,
+        hint: RecordHint,
+    },
+    /// Derive an Ed25519 public key from the corresponding keypair stored at the specified
+    /// location.
+    Sr25519PublicKey { keypair: Location },
+    /// Use the specified Sr25519 keypair to sign the given message.
+    Sr25519Sign { keypair: Location, msg: Vec<u8> },
 }
 
 /// A Procedure return result type.  Contains the different return values for the `Procedure` type calls used with
@@ -109,6 +136,14 @@ pub enum ProcResult {
     Ed25519PublicKey(ResultMessage<[u8; crypto::signatures::ed25519::COMPRESSED_PUBLIC_KEY_LENGTH]>),
     /// Return value for `Ed25519Sign`. Returns an Ed25519 signature.
     Ed25519Sign(ResultMessage<[u8; crypto::signatures::ed25519::SIGNATURE_LENGTH]>),
+    /// Returns the public key derived from the `Sr25519Derive` call.
+    Sr25519Derive(StatusMessage),
+    /// `Sr25519Generate` return value.
+    Sr25519Generate(StatusMessage),
+    /// Return value for `Sr25519PublicKey`. Returns an sr25519 public key.
+    Sr25519PublicKey(ResultMessage<Sr25519PublicKey>),
+    /// Return value for `Sr25519Sign`. Returns an sr25519 signature.
+    Sr25519Sign(ResultMessage<Sr25519Signature>),
     /// Generic Error return message.
     Error(String),
 }
@@ -137,6 +172,22 @@ impl TryFrom<SerdeProcResult> for ProcResult {
                 };
                 Ok(ProcResult::Ed25519Sign(msg))
             }
+            SerdeProcResult::Sr25519Derive(msg) => Ok(ProcResult::Sr25519Derive(msg)),
+            SerdeProcResult::Sr25519Generate(msg) => Ok(ProcResult::Sr25519Generate(msg)),
+            SerdeProcResult::Sr25519PublicKey(msg) => {
+                let msg: ResultMessage<Sr25519PublicKey> = match msg {
+                    ResultMessage::Ok(v) => ResultMessage::Ok(Sr25519PublicKey::from_raw(v.as_slice().try_into()?)),
+                    ResultMessage::Error(e) => ResultMessage::Error(e),
+                };
+                Ok(ProcResult::Sr25519PublicKey(msg))
+            }
+            SerdeProcResult::Sr25519Sign(msg) => {
+                let msg: ResultMessage<Sr25519Signature> = match msg {
+                    ResultMessage::Ok(v) => ResultMessage::Ok(Sr25519Signature::from_raw(v.as_slice().try_into()?)),
+                    ResultMessage::Error(e) => ResultMessage::Error(e),
+                };
+                Ok(ProcResult::Sr25519Sign(msg))
+            }
             SerdeProcResult::Error(err) => Ok(ProcResult::Error(err)),
         }
     }
@@ -152,6 +203,10 @@ enum SerdeProcResult {
     BIP39MnemonicSentence(ResultMessage<String>),
     Ed25519PublicKey(ResultMessage<Vec<u8>>),
     Ed25519Sign(ResultMessage<Vec<u8>>),
+    Sr25519Derive(StatusMessage),
+    Sr25519Generate(StatusMessage),
+    Sr25519PublicKey(ResultMessage<Vec<u8>>),
+    Sr25519Sign(ResultMessage<Vec<u8>>),
     Error(String),
 }
 
@@ -176,6 +231,28 @@ impl From<ProcResult> for SerdeProcResult {
                     ResultMessage::Error(error) => ResultMessage::Error(error),
                 };
                 SerdeProcResult::Ed25519Sign(msg)
+            }
+            ProcResult::Sr25519Derive(msg) => SerdeProcResult::Sr25519Derive(msg),
+            ProcResult::Sr25519Generate(msg) => SerdeProcResult::Sr25519Generate(msg),
+            ProcResult::Sr25519PublicKey(msg) => {
+                let msg = match msg {
+                    ResultMessage::Ok(public_key) => {
+                        let raw: &[u8; SR25519_PUBLIC_KEY_LENGTH] = public_key.as_ref();
+                        ResultMessage::Ok(raw.to_vec())
+                    }
+                    ResultMessage::Error(error) => ResultMessage::Error(error),
+                };
+                SerdeProcResult::Sr25519PublicKey(msg)
+            }
+            ProcResult::Sr25519Sign(msg) => {
+                let msg = match msg {
+                    ResultMessage::Ok(signature) => {
+                        let raw: &[u8; SR25519_SIGNATURE_LENGTH] = signature.as_ref();
+                        ResultMessage::Ok(raw.to_vec())
+                    }
+                    ResultMessage::Error(error) => ResultMessage::Error(error),
+                };
+                SerdeProcResult::Sr25519Sign(msg)
             }
             ProcResult::Error(err) => SerdeProcResult::Error(err),
         }
@@ -658,6 +735,72 @@ impl Receive<SHRequest> for Client {
                         let (vault_id, record_id) = self.resolve_location(private_key);
                         internal.try_tell(
                             InternalMsg::Ed25519Sign {
+                                vault_id,
+                                record_id,
+                                msg,
+                            },
+                            sender,
+                        )
+                    }
+                    // sr25519 procedures
+                    Procedure::Sr25519Derive {
+                        chain,
+                        input,
+                        output,
+                        hint,
+                    } => {
+                        let (seed_vault_id, seed_record_id) = self.resolve_location(input);
+                        ensure_vault_exists!(seed_vault_id, Sr25519Derive, "input");
+
+                        let (key_vault_id, key_record_id) = self.resolve_location(output);
+
+                        if self.vault_exist(key_vault_id).is_none() {
+                            self.add_new_vault(key_vault_id);
+                        }
+
+                        internal.try_tell(
+                            InternalMsg::Sr25519Derive {
+                                chain,
+                                seed_vault_id,
+                                seed_record_id,
+                                key_vault_id,
+                                key_record_id,
+                                hint,
+                            },
+                            sender,
+                        )
+                    }
+                    Procedure::Sr25519Generate {
+                        mnemonic,
+                        passphrase,
+                        output,
+                        hint,
+                    } => {
+                        let (vault_id, record_id) = self.resolve_location(output);
+
+                        if self.vault_exist(vault_id).is_none() {
+                            self.add_new_vault(vault_id);
+                        }
+
+                        internal.try_tell(
+                            InternalMsg::Sr25519Generate {
+                                mnemonic,
+                                passphrase: passphrase.unwrap_or_else(|| "".into()),
+                                vault_id,
+                                record_id,
+                                hint,
+                            },
+                            sender,
+                        )
+                    }
+                    Procedure::Sr25519PublicKey { keypair } => {
+                        let (vault_id, record_id) = self.resolve_location(keypair);
+                        internal.try_tell(InternalMsg::Sr25519PublicKey { vault_id, record_id }, sender)
+                    }
+                    Procedure::Sr25519Sign { keypair, msg } => {
+                        let (vault_id, record_id) = self.resolve_location(keypair);
+                        internal.try_tell(
+                            InternalMsg::Sr25519Sign {
                                 vault_id,
                                 record_id,
                                 msg,
