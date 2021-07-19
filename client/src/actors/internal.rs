@@ -143,7 +143,7 @@ pub enum InternalMsg {
     },
     /// [`Sr25519Generate`] Proc
     Sr25519Generate {
-        mnemonic: Option<String>,
+        mnemonic_or_seed: Option<String>,
         passphrase: String,
         vault_id: VaultId,
         record_id: RecordId,
@@ -804,7 +804,7 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                 }
             }
             InternalMsg::Sr25519Generate {
-                mnemonic,
+                mnemonic_or_seed,
                 passphrase,
                 vault_id,
                 record_id,
@@ -813,8 +813,8 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                 let cstr: String = self.client_id.into();
                 let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
 
-                let keypair = match mnemonic {
-                    Some(m) => sr25519::KeyPair::from_mnemonic(&m, Some(&passphrase)),
+                let keypair = match mnemonic_or_seed {
+                    Some(m) => sr25519::KeyPair::from_string(&m, Some(&passphrase)),
                     None => {
                         let mut entropy = [0u8; 32];
                         fill(&mut entropy).expect(line_error!());
@@ -822,7 +822,7 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                         let mnemonic =
                             bip39::wordlist::encode(&entropy, &bip39::wordlist::ENGLISH).expect(line_error!());
 
-                        sr25519::KeyPair::from_mnemonic(&mnemonic, Some(&passphrase))
+                        sr25519::KeyPair::from_string(&mnemonic, Some(&passphrase))
                     }
                 };
 

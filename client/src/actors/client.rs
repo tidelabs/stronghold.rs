@@ -100,10 +100,10 @@ pub enum Procedure {
         output: Location,
         hint: RecordHint,
     },
-    /// Generate a sr25519 key pair and its corresponding mnemonic sentence (optionally protected by a
+    /// Generate a sr25519 key pair and its corresponding mnemonic sentence or seed (optionally protected by a
     /// passphrase) and store them in the `output` location.
     Sr25519Generate {
-        mnemonic: Option<String>,
+        mnemonic_or_seed: Option<String>,
         passphrase: Option<String>,
         output: Location,
         hint: RecordHint,
@@ -771,7 +771,7 @@ impl Receive<SHRequest> for Client {
                         )
                     }
                     Procedure::Sr25519Generate {
-                        mnemonic,
+                        mnemonic_or_seed,
                         passphrase,
                         output,
                         hint,
@@ -784,7 +784,7 @@ impl Receive<SHRequest> for Client {
 
                         internal.try_tell(
                             InternalMsg::Sr25519Generate {
-                                mnemonic,
+                                mnemonic_or_seed,
                                 passphrase: passphrase.unwrap_or_else(|| "".into()),
                                 vault_id,
                                 record_id,
