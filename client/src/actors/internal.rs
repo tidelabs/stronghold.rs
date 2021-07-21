@@ -7,7 +7,8 @@ use riker::actors::*;
 
 use std::{
     collections::{HashMap, HashSet},
-    convert::TryFrom,
+    convert::{TryFrom, TryInto},
+    ops::Deref,
     path::PathBuf,
 };
 
@@ -20,7 +21,7 @@ use crypto::{
         bip39,
         slip10::{self, Chain, Curve, Seed},
     },
-    signatures::{ed25519, sr25519},
+    signatures::{ed25519, secp256k1, sr25519},
     utils::rand::fill,
 };
 
@@ -156,6 +157,21 @@ pub enum InternalMsg {
         vault_id: VaultId,
         record_id: RecordId,
         msg: Vec<u8>,
+    },
+
+    /// [`Secp256k1Generate`] Proc
+    Secp256k1Generate {
+        vault_id: VaultId,
+        record_id: RecordId,
+        hint: RecordHint,
+    },
+    /// [`Secp256k1PublicKey`] Proc
+    Secp256k1PublicKey { vault_id: VaultId, record_id: RecordId },
+    /// [`Sr25519Sign`] Proc
+    Secp256k1Sign {
+        vault_id: VaultId,
+        record_id: RecordId,
+        msg: Box<[u8; 32]>,
     },
 }
 
@@ -946,6 +962,136 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                     client.try_tell(
                         ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Sr25519Sign(
                             ResultMessage::Error("Failed to access vault".into()),
+                        ))),
+                        sender,
+                    )
+                }
+            }
+
+            InternalMsg::Secp256k1Generate {
+                vault_id,
+                record_id,
+                hint,
+            } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+
+                let mut key = vec![0u8; secp256k1::SECRET_KEY_LENGTH];
+                fill(&mut key).expect(line_error!());
+                let private_key = secp256k1::SecretKey::from_bytes(&key.try_into().unwrap()).expect(line_error!());
+
+                let key = if !self.keystore.vault_exists(vault_id) {
+                    let k = self.keystore.create_key(vault_id);
+                    self.db.init_vault(&k, vault_id).expect(line_error!());
+
+                    k
+                } else {
+                    self.keystore.get_key(vault_id).expect(line_error!())
+                };
+
+                self.keystore.insert_key(vault_id, key.clone());
+
+                self.db
+                    .write(&key, vault_id, record_id, &private_key.to_bytes(), hint)
+                    .expect(line_error!());
+
+                client.try_tell(
+                    ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Secp256k1Generate(
+                        StatusMessage::OK,
+                    ))),
+                    sender,
+                );
+            }
+            InternalMsg::Secp256k1PublicKey { vault_id, record_id } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+
+                if let Some(key) = self.keystore.get_key(vault_id) {
+                    self.keystore.insert_key(vault_id, key.clone());
+
+                    self.db
+                        .get_guard(&key, vault_id, record_id, |data| {
+                            let raw = data.borrow();
+
+                            if raw.len() != 32 {
+                                client.try_tell(
+                                    ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                        ProcResult::Secp256k1PublicKey(ResultMessage::Error(
+                                            "Incorrect number of private key bytes".into(),
+                                        )),
+                                    )),
+                                    sender.clone(),
+                                );
+                            }
+
+                            let private_key =
+                                secp256k1::SecretKey::from_bytes(&raw.deref().try_into().expect(line_error!()))
+                                    .expect(line_error!());
+                            let pk = private_key.public_key();
+
+                            client.try_tell(
+                                ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                    ProcResult::Secp256k1PublicKey(ResultMessage::Ok(pk)),
+                                )),
+                                sender,
+                            );
+
+                            Ok(())
+                        })
+                        .expect(line_error!());
+                } else {
+                    client.try_tell(
+                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                            ProcResult::Secp256k1PublicKey(ResultMessage::Error("Failed to access vault".into())),
+                        )),
+                        sender,
+                    )
+                }
+            }
+            InternalMsg::Secp256k1Sign {
+                vault_id,
+                record_id,
+                msg,
+            } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+                if let Some(pkey) = self.keystore.get_key(vault_id) {
+                    self.keystore.insert_key(vault_id, pkey.clone());
+
+                    self.db
+                        .get_guard(&pkey, vault_id, record_id, |data| {
+                            let raw = data.borrow();
+
+                            if raw.len() != 32 {
+                                client.try_tell(
+                                    ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                        ProcResult::Secp256k1Sign(ResultMessage::Error(
+                                            "incorrect number of private key bytes".into(),
+                                        )),
+                                    )),
+                                    sender.clone(),
+                                );
+                            }
+
+                            let private_key =
+                                secp256k1::SecretKey::from_bytes(&raw.deref().try_into().expect(line_error!()))
+                                    .expect(line_error!());
+                            let (sig, recovery_id) = private_key.sign(&msg);
+
+                            client.try_tell(
+                                ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                    ProcResult::Secp256k1Sign(ResultMessage::Ok((sig, recovery_id))),
+                                )),
+                                sender,
+                            );
+
+                            Ok(())
+                        })
+                        .expect(line_error!());
+                } else {
+                    client.try_tell(
+                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Secp256k1Sign(
+                            ResultMessage::Error("Failed; to access vault".into()),
                         ))),
                         sender,
                     )
