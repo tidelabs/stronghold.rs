@@ -151,7 +151,7 @@ fn usecase_sr25519() {
     let seed = fresh::location();
 
     match futures::executor::block_on(sh.runtime_exec(Procedure::Sr25519Generate {
-        mnemonic: if fresh::coinflip() {
+        mnemonic_or_seed: if fresh::coinflip() {
             let mut entropy = [0u8; 32];
             fill(&mut entropy).unwrap();
 
