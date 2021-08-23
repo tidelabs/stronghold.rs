@@ -15,6 +15,11 @@ use std::{
 use engine::vault::{BoxProvider, ClientId, DbView, Key, RecordHint, RecordId, VaultId};
 
 use stronghold_utils::GuardDebug;
+use web3::{
+    api::Accounts,
+    signing::{Key as web3Key, Signature, SigningError},
+    types::{Address as Web3Address, TransactionParameters, H256},
+};
 
 use crypto::{
     keys::{
@@ -37,6 +42,51 @@ use crate::{
     },
     utils::{ResultMessage, StatusMessage},
 };
+
+struct Secp256k1SecretKeyRef<'a>(&'a secp256k1::SecretKey);
+
+impl<'a> web3Key for Secp256k1SecretKeyRef<'a> {
+    fn sign(&self, message: &[u8], chain_id: Option<u64>) -> Result<Signature, SigningError> {
+        let (signature, recovery_id) = self.0.sign(
+            message[0..32]
+                .try_into()
+                .expect("secp256k1 message must contain exactly 32 bytes"),
+        );
+
+        let standard_v = recovery_id.as_u8() as u64;
+        let v = if let Some(chain_id) = chain_id {
+            // When signing with a chain ID, add chain replay protection.
+            standard_v + 35 + chain_id * 2
+        } else {
+            // Otherwise, convert to 'Electrum' notation.
+            standard_v + 27
+        };
+        let signature = signature.to_bytes();
+        let r = H256::from_slice(&signature[..32]);
+        let s = H256::from_slice(&signature[32..]);
+
+        Ok(Signature { v, r, s })
+    }
+
+    fn address(&self) -> Web3Address {
+        let public_key = self.0.public_key();
+        let public_key = public_key.to_bytes();
+
+        debug_assert_eq!(public_key[0], 0x04);
+        let hash = keccak256(&public_key[1..]);
+
+        Web3Address::from_slice(&hash[12..])
+    }
+}
+
+fn keccak256(bytes: &[u8]) -> [u8; 32] {
+    use tiny_keccak::{Hasher, Keccak};
+    let mut output = [0u8; 32];
+    let mut hasher = Keccak::v256();
+    hasher.update(bytes);
+    hasher.finalize(&mut output);
+    output
+}
 
 /// State for the internal actor used as the runtime.
 pub struct InternalActor<P: BoxProvider + Send + Sync + Clone + 'static> {
@@ -172,6 +222,14 @@ pub enum InternalMsg {
         vault_id: VaultId,
         record_id: RecordId,
         msg: Box<[u8; 32]>,
+    },
+
+    /// Sign transaction using web3 instance.
+    Web3SignTransaction {
+        vault_id: VaultId,
+        record_id: RecordId,
+        accounts: Accounts<web3::transports::Http>,
+        tx: TransactionParameters,
     },
 }
 
@@ -1084,6 +1142,73 @@ impl Receive<InternalMsg> for InternalActor<Provider> {
                                 )),
                                 sender,
                             );
+
+                            Ok(())
+                        })
+                        .expect(line_error!());
+                } else {
+                    client.try_tell(
+                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(ProcResult::Secp256k1Sign(
+                            ResultMessage::Error("Failed; to access vault".into()),
+                        ))),
+                        sender,
+                    )
+                }
+            }
+
+            // web3
+            InternalMsg::Web3SignTransaction {
+                vault_id,
+                record_id,
+                accounts,
+                tx,
+            } => {
+                let cstr: String = self.client_id.into();
+                let client = ctx.select(&format!("/user/{}/", cstr)).expect(line_error!());
+                if let Some(pkey) = self.keystore.get_key(vault_id) {
+                    self.keystore.insert_key(vault_id, pkey.clone());
+
+                    self.db
+                        .get_guard(&pkey, vault_id, record_id, |data| {
+                            let raw = data.borrow();
+
+                            if raw.len() != 32 {
+                                client.try_tell(
+                                    ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                        ProcResult::Web3SignTransaction(ResultMessage::Error(
+                                            "incorrect number of private key bytes".into(),
+                                        )),
+                                    )),
+                                    sender.clone(),
+                                );
+                            }
+
+                            let private_key =
+                                secp256k1::SecretKey::from_bytes(&raw.deref().try_into().expect(line_error!()))
+                                    .expect(line_error!());
+                            let key = Secp256k1SecretKeyRef(&private_key);
+
+                            match futures::executor::block_on(accounts.sign_transaction(tx, key)) {
+                                Ok(signed_transaction) => {
+                                    client.try_tell(
+                                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                            ProcResult::Web3SignTransaction(ResultMessage::Ok(signed_transaction)),
+                                        )),
+                                        sender,
+                                    );
+                                }
+                                Err(e) => {
+                                    client.try_tell(
+                                        ClientMsg::InternalResults(InternalResults::ReturnControlRequest(
+                                            ProcResult::Web3SignTransaction(ResultMessage::Error(format!(
+                                                "failed to sign transaction: {}",
+                                                e.to_string()
+                                            ))),
+                                        )),
+                                        sender.clone(),
+                                    );
+                                }
+                            }
 
                             Ok(())
                         })

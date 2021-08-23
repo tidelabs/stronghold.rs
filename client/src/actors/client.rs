@@ -30,6 +30,10 @@ use engine::{
     vault::{ClientId, RecordHint, RecordId},
 };
 use serde::{Deserialize, Serialize};
+use web3::{
+    api::Accounts,
+    types::{SignedTransaction, TransactionParameters},
+};
 
 use riker::actors::*;
 
@@ -126,6 +130,14 @@ pub enum Procedure {
     Secp256k1PublicKey { private_key: Location },
     /// Use the specified secp256k1 secret key to sign the given message.
     Secp256k1Sign { private_key: Location, msg: Box<[u8; 32]> },
+
+    /// Sign transaction using web3 instance.
+    #[serde(skip)]
+    Web3SignTransaction {
+        accounts: Accounts<web3::transports::Http>,
+        tx: TransactionParameters,
+        private_key: Location,
+    },
 }
 
 /// A Procedure return result type.  Contains the different return values for the `Procedure` type calls used with
@@ -163,6 +175,8 @@ pub enum ProcResult {
     Secp256k1PublicKey(ResultMessage<Secp256k1PublicKey>),
     /// Return value for `Secp256k1Sign`. Returns a secp256k1 signature.
     Secp256k1Sign(ResultMessage<(Secp256k1Signature, Secp256k1RecoveryId)>),
+    /// Return value for `Web3SignTransaction`. Returns the data for offline signed transaction.
+    Web3SignTransaction(ResultMessage<SignedTransaction>),
     /// Generic Error return message.
     Error(String),
 }
@@ -317,6 +331,7 @@ impl From<ProcResult> for SerdeProcResult {
                 };
                 SerdeProcResult::Secp256k1Sign(msg)
             }
+            ProcResult::Web3SignTransaction(_msg) => panic!("unexpected `Web3SignTransaction` result"),
             ProcResult::Error(err) => SerdeProcResult::Error(err),
         }
     }
@@ -899,6 +914,23 @@ impl Receive<SHRequest> for Client {
                                 vault_id,
                                 record_id,
                                 msg,
+                            },
+                            sender,
+                        )
+                    }
+                    // web3
+                    Procedure::Web3SignTransaction {
+                        accounts,
+                        tx,
+                        private_key,
+                    } => {
+                        let (vault_id, record_id) = self.resolve_location(private_key);
+                        internal.try_tell(
+                            InternalMsg::Web3SignTransaction {
+                                vault_id,
+                                record_id,
+                                accounts,
+                                tx,
                             },
                             sender,
                         )
