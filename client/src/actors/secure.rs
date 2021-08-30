@@ -32,11 +32,13 @@ use crypto::{
         ed25519,
         secp256k1::{
             PublicKey as Secp256k1PublicKeyValue, RecoveryId as Secp256k1RecoveryId, SecretKey as Secp256k1SecretKey,
-            Signature as Secp256k1Signature, SECRET_KEY_LENGTH as SECP256K1_SECRET_KEY_LENGTH,
+            Signature as Secp256k1Signature, PUBLIC_KEY_LENGTH as SECP256K1_PUBLIC_KEY_LENGTH,
+            SECRET_KEY_LENGTH as SECP256K1_SECRET_KEY_LENGTH, SIGNATURE_LENGTH as SECP256K1_SIGNATURE_LENGTH,
         },
         sr25519::{
             DeriveJunction as Sr25519DeriveJunction, KeyPair as Sr25519KeyPair, PublicKey as Sr25519PublicKeyValue,
-            Signature as Sr25519Signature,
+            Signature as Sr25519Signature, PUBLIC_KEY_LENGTH as SR25519_PUBLIC_KEY_LENGTH,
+            SIGNATURE_LENGTH as SR25519_SIGNATURE_LENGTH,
         },
     },
     utils::rand::fill,
@@ -60,9 +62,6 @@ pub use self::procedures::ProcResult;
 /// Store typedef on `engine::store::Cache`
 pub type Store = Cache<Vec<u8>, Vec<u8>>;
 
-// #[cfg(feature = "communication")]
-// use communication::actor::{PermissionValue, RequestPermissions, ToPermissionVariants, VariantPermission};
-
 use stronghold_utils::GuardDebug;
 use thiserror::Error as DeriveError;
 
@@ -85,6 +84,12 @@ pub enum VaultError {
 }
 
 #[derive(DeriveError, Debug)]
+pub enum StoreError {
+    #[error("Unable to read from store")]
+    NotExisting,
+}
+
+#[derive(DeriveError, Debug)]
 pub enum SnapshotError {
     #[error("No snapshot present for client id ({0})")]
     NoSnapshotPresent(String),
@@ -95,6 +100,7 @@ pub mod messages {
 
     use super::*;
     use crate::{internals, Location};
+    use serde::{Deserialize, Serialize};
     use std::time::Duration;
 
     #[derive(Clone, GuardDebug)]
@@ -118,7 +124,7 @@ pub mod messages {
         type Result = ();
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct CreateVault {
         pub location: Location,
     }
@@ -127,7 +133,7 @@ pub mod messages {
         type Result = ();
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct WriteToVault {
         pub location: Location,
 
@@ -139,7 +145,7 @@ pub mod messages {
         type Result = Result<(), anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct RevokeData {
         pub location: Location,
     }
@@ -148,7 +154,7 @@ pub mod messages {
         type Result = Result<(), anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct GarbageCollect {
         pub location: Location,
     }
@@ -157,7 +163,7 @@ pub mod messages {
         type Result = Result<(), anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct ListIds {
         pub vault_path: Vec<u8>,
     }
@@ -166,7 +172,7 @@ pub mod messages {
         type Result = Result<Vec<(RecordId, RecordHint)>, anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct CheckRecord {
         pub location: Location,
     }
@@ -175,14 +181,14 @@ pub mod messages {
         type Result = bool;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct ClearCache;
 
     impl Message for ClearCache {
         type Result = Result<(), anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct CheckVault {
         pub vault_path: Vec<u8>,
     }
@@ -191,7 +197,7 @@ pub mod messages {
         type Result = Result<(), anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct WriteToStore {
         pub location: Location,
         pub payload: Vec<u8>,
@@ -202,7 +208,7 @@ pub mod messages {
         type Result = Result<(), anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct ReadFromStore {
         pub location: Location,
     }
@@ -211,7 +217,7 @@ pub mod messages {
         type Result = Result<Vec<u8>, anyhow::Error>;
     }
 
-    #[derive(Clone, GuardDebug)]
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct DeleteFromStore {
         pub location: Location,
     }
@@ -240,8 +246,10 @@ pub mod procedures {
     use crate::Location;
     use crypto::keys::slip10::ChainCode;
     use serde::{Deserialize, Serialize};
+    use std::convert::TryInto;
 
     /// for old client (cryptographic) procedure calling
+    #[derive(Clone, Serialize, Deserialize)]
     pub enum Procedure {
         /// Generate a raw SLIP10 seed of the specified size (in bytes, defaults to 64 bytes/512 bits) and store it in
         /// the `output` location
@@ -317,6 +325,7 @@ pub mod procedures {
         Secp256k1Sign { private_key: Location, msg: Box<[u8; 32]> },
 
         /// Sign transaction using web3 instance.
+        #[serde(skip)]
         Web3SignTransaction {
             accounts: Accounts<web3::transports::Http>,
             tx: TransactionParameters,
@@ -324,7 +333,9 @@ pub mod procedures {
         },
     }
 
-    #[derive(GuardDebug)]
+    #[derive(GuardDebug, Clone, Serialize, Deserialize)]
+    #[serde(try_from = "SerdeProcResult")]
+    #[serde(into = "SerdeProcResult")]
     pub enum ProcResult {
         /// Return from generating a `SLIP10` seed.
         SLIP10Generate(StatusMessage),
@@ -337,7 +348,7 @@ pub mod procedures {
         /// `BIP39MnemonicSentence` return value. Returns the mnemonic sentence for the corresponding seed.
         BIP39MnemonicSentence(ResultMessage<String>),
         /// Return value for `Ed25519PublicKey`. Returns an Ed25519 public key.
-        Ed25519PublicKey(ResultMessage<[u8; crypto::signatures::ed25519::COMPRESSED_PUBLIC_KEY_LENGTH]>),
+        Ed25519PublicKey(ResultMessage<[u8; crypto::signatures::ed25519::PUBLIC_KEY_LENGTH]>),
         /// Return value for `Ed25519Sign`. Returns an Ed25519 signature.
         Ed25519Sign(ResultMessage<[u8; crypto::signatures::ed25519::SIGNATURE_LENGTH]>),
         /// Returns the public key derived from the `Sr25519Derive` call.
@@ -361,7 +372,167 @@ pub mod procedures {
         Error(String),
     }
 
-    #[derive(GuardDebug)]
+    impl TryFrom<SerdeProcResult> for ProcResult {
+        type Error = crate::Error;
+
+        fn try_from(serde_proc_result: SerdeProcResult) -> Result<Self, crate::Error> {
+            match serde_proc_result {
+                SerdeProcResult::SLIP10Generate(msg) => Ok(ProcResult::SLIP10Generate(msg)),
+                SerdeProcResult::SLIP10Derive(msg) => Ok(ProcResult::SLIP10Derive(msg)),
+                SerdeProcResult::BIP39Recover(msg) => Ok(ProcResult::BIP39Recover(msg)),
+                SerdeProcResult::BIP39Generate(msg) => Ok(ProcResult::BIP39Generate(msg)),
+                SerdeProcResult::BIP39MnemonicSentence(msg) => Ok(ProcResult::BIP39MnemonicSentence(msg)),
+                SerdeProcResult::Ed25519PublicKey(msg) => {
+                    let msg: ResultMessage<[u8; crypto::signatures::ed25519::PUBLIC_KEY_LENGTH]> = match msg {
+                        ResultMessage::Ok(v) => ResultMessage::Ok(v.as_slice().try_into()?),
+                        ResultMessage::Error(e) => ResultMessage::Error(e),
+                    };
+                    Ok(ProcResult::Ed25519PublicKey(msg))
+                }
+                SerdeProcResult::Ed25519Sign(msg) => {
+                    let msg: ResultMessage<[u8; crypto::signatures::ed25519::SIGNATURE_LENGTH]> = match msg {
+                        ResultMessage::Ok(v) => ResultMessage::Ok(v.as_slice().try_into()?),
+                        ResultMessage::Error(e) => ResultMessage::Error(e),
+                    };
+                    Ok(ProcResult::Ed25519Sign(msg))
+                }
+                SerdeProcResult::Sr25519Derive(msg) => Ok(ProcResult::Sr25519Derive(msg)),
+                SerdeProcResult::Sr25519Generate(msg) => Ok(ProcResult::Sr25519Generate(msg)),
+                SerdeProcResult::Sr25519PublicKey(msg) => {
+                    let msg: ResultMessage<Sr25519PublicKeyValue> = match msg {
+                        ResultMessage::Ok(v) => {
+                            ResultMessage::Ok(Sr25519PublicKeyValue::from_raw(v.as_slice().try_into()?))
+                        }
+                        ResultMessage::Error(e) => ResultMessage::Error(e),
+                    };
+                    Ok(ProcResult::Sr25519PublicKey(msg))
+                }
+                SerdeProcResult::Sr25519Sign(msg) => {
+                    let msg: ResultMessage<Sr25519Signature> = match msg {
+                        ResultMessage::Ok(v) => ResultMessage::Ok(Sr25519Signature::from_raw(v.as_slice().try_into()?)),
+                        ResultMessage::Error(e) => ResultMessage::Error(e),
+                    };
+                    Ok(ProcResult::Sr25519Sign(msg))
+                }
+                SerdeProcResult::Secp256k1Generate(msg) => Ok(ProcResult::Secp256k1Generate(msg)),
+                SerdeProcResult::Secp256k1PublicKey(msg) => {
+                    let msg: ResultMessage<Secp256k1PublicKeyValue> = match msg {
+                        ResultMessage::Ok(v) => ResultMessage::Ok(
+                            Secp256k1PublicKeyValue::from_bytes(v.as_slice().try_into()?)
+                                .map_err(engine::Error::CryptoError)?,
+                        ),
+                        ResultMessage::Error(e) => ResultMessage::Error(e),
+                    };
+                    Ok(ProcResult::Secp256k1PublicKey(msg))
+                }
+                SerdeProcResult::Secp256k1Sign(r) => {
+                    let msg: ResultMessage<(Secp256k1Signature, Secp256k1RecoveryId)> = match r {
+                        ResultMessage::Ok((sig, recovery_id)) => ResultMessage::Ok((
+                            Secp256k1Signature::from_bytes(sig.as_slice().try_into()?)
+                                .map_err(engine::Error::CryptoError)?,
+                            Secp256k1RecoveryId::from_u8(recovery_id).map_err(engine::Error::CryptoError)?,
+                        )),
+                        ResultMessage::Error(e) => ResultMessage::Error(e),
+                    };
+                    Ok(ProcResult::Secp256k1Sign(msg))
+                }
+                SerdeProcResult::Error(err) => Ok(ProcResult::Error(err)),
+            }
+        }
+    }
+
+    // Replaces arrays in ProcResult with vectors to derive Serialize/ Deserialize
+    #[derive(Clone, Serialize, Deserialize)]
+    enum SerdeProcResult {
+        SLIP10Generate(StatusMessage),
+        SLIP10Derive(ResultMessage<ChainCode>),
+        BIP39Recover(StatusMessage),
+        BIP39Generate(StatusMessage),
+        BIP39MnemonicSentence(ResultMessage<String>),
+        Ed25519PublicKey(ResultMessage<Vec<u8>>),
+        Ed25519Sign(ResultMessage<Vec<u8>>),
+        Sr25519Derive(StatusMessage),
+        Sr25519Generate(StatusMessage),
+        Sr25519PublicKey(ResultMessage<Vec<u8>>),
+        Sr25519Sign(ResultMessage<Vec<u8>>),
+        Secp256k1Generate(StatusMessage),
+        Secp256k1PublicKey(ResultMessage<Vec<u8>>),
+        Secp256k1Sign(ResultMessage<(Vec<u8>, u8)>),
+        Error(String),
+    }
+
+    impl From<ProcResult> for SerdeProcResult {
+        fn from(proc_result: ProcResult) -> Self {
+            match proc_result {
+                ProcResult::SLIP10Generate(msg) => SerdeProcResult::SLIP10Generate(msg),
+                ProcResult::SLIP10Derive(msg) => SerdeProcResult::SLIP10Derive(msg),
+                ProcResult::BIP39Recover(msg) => SerdeProcResult::BIP39Recover(msg),
+                ProcResult::BIP39Generate(msg) => SerdeProcResult::BIP39Generate(msg),
+                ProcResult::BIP39MnemonicSentence(msg) => SerdeProcResult::BIP39MnemonicSentence(msg),
+                ProcResult::Ed25519PublicKey(msg) => {
+                    let msg = match msg {
+                        ResultMessage::Ok(slice) => ResultMessage::Ok(slice.to_vec()),
+                        ResultMessage::Error(error) => ResultMessage::Error(error),
+                    };
+                    SerdeProcResult::Ed25519PublicKey(msg)
+                }
+                ProcResult::Ed25519Sign(msg) => {
+                    let msg = match msg {
+                        ResultMessage::Ok(slice) => ResultMessage::Ok(slice.to_vec()),
+                        ResultMessage::Error(error) => ResultMessage::Error(error),
+                    };
+                    SerdeProcResult::Ed25519Sign(msg)
+                }
+                ProcResult::Sr25519Derive(msg) => SerdeProcResult::Sr25519Derive(msg),
+                ProcResult::Sr25519Generate(msg) => SerdeProcResult::Sr25519Generate(msg),
+                ProcResult::Sr25519PublicKey(msg) => {
+                    let msg = match msg {
+                        ResultMessage::Ok(public_key) => {
+                            let raw: &[u8; SR25519_PUBLIC_KEY_LENGTH] = public_key.as_ref();
+                            ResultMessage::Ok(raw.to_vec())
+                        }
+                        ResultMessage::Error(error) => ResultMessage::Error(error),
+                    };
+                    SerdeProcResult::Sr25519PublicKey(msg)
+                }
+                ProcResult::Sr25519Sign(msg) => {
+                    let msg = match msg {
+                        ResultMessage::Ok(signature) => {
+                            let raw: &[u8; SR25519_SIGNATURE_LENGTH] = signature.as_ref();
+                            ResultMessage::Ok(raw.to_vec())
+                        }
+                        ResultMessage::Error(error) => ResultMessage::Error(error),
+                    };
+                    SerdeProcResult::Sr25519Sign(msg)
+                }
+                ProcResult::Secp256k1Generate(msg) => SerdeProcResult::Secp256k1Generate(msg),
+                ProcResult::Secp256k1PublicKey(msg) => {
+                    let msg = match msg {
+                        ResultMessage::Ok(public_key) => {
+                            let raw: [u8; SECP256K1_PUBLIC_KEY_LENGTH] = public_key.to_bytes();
+                            ResultMessage::Ok(raw.to_vec())
+                        }
+                        ResultMessage::Error(error) => ResultMessage::Error(error),
+                    };
+                    SerdeProcResult::Secp256k1PublicKey(msg)
+                }
+                ProcResult::Secp256k1Sign(msg) => {
+                    let msg = match msg {
+                        ResultMessage::Ok((signature, recovery_id)) => {
+                            let raw: [u8; SECP256K1_SIGNATURE_LENGTH] = signature.to_bytes();
+                            ResultMessage::Ok((raw.to_vec(), recovery_id.as_u8()))
+                        }
+                        ResultMessage::Error(error) => ResultMessage::Error(error),
+                    };
+                    SerdeProcResult::Secp256k1Sign(msg)
+                }
+                ProcResult::Web3SignTransaction(_msg) => panic!("unexpected `Web3SignTransaction` result"),
+                ProcResult::Error(err) => SerdeProcResult::Error(err),
+            }
+        }
+    }
+
+    #[derive(Clone, GuardDebug, Serialize, Deserialize)]
     pub struct CallProcedure {
         pub proc: Procedure, // is procedure from client
     }
@@ -580,11 +751,13 @@ pub mod testing {
 
     use super::*;
     use crate::Location;
+    use serde::{Deserialize, Serialize};
 
     /// INSECURE MESSAGE
     /// MAY ONLY BE USED IN TESTING CONFIGURATIONS
     ///
     /// Reads data from the vault
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ReadFromVault {
         pub location: Location,
     }
@@ -739,7 +912,7 @@ impl_handler!(
 
         match self.read_from_store(vault_id.into()) {
             Some(data) => Ok(data),
-            None => Err(anyhow::anyhow!(VaultError::NotExisting)), // semantically wrong, use store error
+            None => Err(anyhow::anyhow!(StoreError::NotExisting)),
         }
     }
 );
@@ -1247,26 +1420,19 @@ impl_handler!(procedures::Ed25519PublicKey, Result<crate::ProcResult, anyhow::Er
 
                 if raw.len() < 32 {
 
-                    // the client actor will interupt the control flow
-                    // but could this be an option to return an error
                     return Err(engine::Error::CryptoError(
-                        crypto::Error::BufferSize {has : raw.len(), needs : 32, name: "data buffer" }));
+                        crypto::error::Error::BufferSize{has : raw.len(), needs : 32, name: "data buffer" }));
 
                 }
                 raw.truncate(32);
                 let mut bs = [0; 32];
                 bs.copy_from_slice(&raw);
 
-                let sk = match ed25519::SecretKey::from_le_bytes(bs) {
-                    Ok(result) => result,
-                    Err(_e) => {return Err(engine::Error::CryptoError(
-                        crypto::Error::ConvertError { from : "Slice of Bytes", to : "ed25519 SecretKey From LE bytes"}
-                    ));}
-                };
+                let sk = ed25519::SecretKey::from_bytes(bs);
                 let pk = sk.public_key();
 
                 // send to client this result
-                result.set(pk.to_compressed_bytes());
+                result.set(pk.to_bytes());
 
                 Ok(())
             }) {
@@ -1285,9 +1451,6 @@ impl_handler!(procedures::Ed25519PublicKey, Result<crate::ProcResult, anyhow::Er
 });
 
 impl_handler!(procedures::Ed25519Sign, Result <crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
-    // TODO move
-    use std::{rc::Rc, cell::Cell};
-
     if let Some(pkey) = self.keystore.get_key(msg.vault_id) {
             self.keystore.insert_key(msg.vault_id, pkey.clone());
 
@@ -1306,12 +1469,8 @@ impl_handler!(procedures::Ed25519Sign, Result <crate::ProcResult, anyhow::Error>
                     raw.truncate(32);
                     let mut bs = [0; 32];
                     bs.copy_from_slice(&raw);
-                    let sk = match ed25519::SecretKey::from_le_bytes(bs) {
-                        Ok(result) => result,
-                        Err(_e) => {return Err(engine::Error::CryptoError(
-                            crypto::Error::ConvertError { from : "Slice of Bytes", to : "ed25519 SecretKey From LE bytes"}
-                        ));}
-                    };
+
+                    let sk =  ed25519::SecretKey::from_bytes(bs);
 
                     let sig = sk.sign(&msg.msg);
                     result.set(sig.to_bytes());

@@ -79,13 +79,6 @@
       "path": "./engine/runtime/",
       "manager": "rust"
     },
-    "stronghold-utils": {
-      "path": "./utils/",
-      "manager": "rust",
-      "dependencies": [
-        "stronghold-derive"
-      ]
-    },
     "stronghold-engine": {
       "path": "./engine/",
       "manager": "rust",
@@ -94,8 +87,15 @@
         "stronghold-utils"
       ]
     },
-    "stronghold-communication": {
-      "path": "./communication/",
+    "stronghold-utils": {
+      "path": "./utils/",
+      "manager": "rust",
+      "dependencies": [
+        "stronghold-derive"
+      ]
+    },
+    "stronghold-p2p": {
+      "path": "./p2p/",
       "manager": "rust",
       "dependencies": [
         "stronghold-utils"
@@ -106,7 +106,7 @@
       "manager": "rust",
       "dependencies": [
         "stronghold-engine",
-        "stronghold-communication",
+        "stronghold-p2p",
         "stronghold-utils",
         "stronghold-runtime"
       ]
