@@ -1642,6 +1642,9 @@ impl_handler!(procedures::Secp256k1Generate, Result<crate::ProcResult, anyhow::E
 });
 
 impl_handler!(procedures::Secp256k1Store, Result<crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
+    if msg.key.len() != SECP256K1_SECRET_KEY_LENGTH {
+        return Err(anyhow::anyhow!("incorrect number of private key bytes"));
+    }
     let private_key = Secp256k1SecretKey::from_bytes(&msg.key.try_into().unwrap()).map_err(|e| anyhow::anyhow!(e))?;
 
     if !self.keystore.vault_exists(msg.vault_id) {
@@ -1668,7 +1671,7 @@ impl_handler!(procedures::Secp256k1PublicKey, Result<crate::ProcResult, anyhow::
         .get_guard(&key, msg.vault_id, msg.record_id, |data| {
             let raw = data.borrow();
 
-            if raw.len() != 32 {
+            if raw.len() != SECP256K1_SECRET_KEY_LENGTH {
                 return Err(engine::Error::DatabaseError("incorrect number of private key bytes".into()));
             }
 
@@ -1694,7 +1697,7 @@ impl_handler!(procedures::Secp256k1Sign, Result<crate::ProcResult, anyhow::Error
         .get_guard(&key, msg.vault_id, msg.record_id, |data| {
             let raw = data.borrow();
 
-            if raw.len() != 32 {
+            if raw.len() != SECP256K1_SECRET_KEY_LENGTH {
                 return Err(engine::Error::DatabaseError("incorrect number of private key bytes".into()));
             }
 
@@ -1766,7 +1769,7 @@ impl<T: web3::Transport> Handler<procedures::Web3SignTransaction<T>> for SecureC
             .get_guard(&key, msg.vault_id, msg.record_id, |data| {
                 let raw = data.borrow();
 
-                if raw.len() != 32 {
+                if raw.len() != SECP256K1_SECRET_KEY_LENGTH {
                     return Err(engine::Error::DatabaseError(
                         "incorrect number of private key bytes".into(),
                     ));
