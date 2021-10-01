@@ -250,7 +250,7 @@ pub mod procedures {
 
     /// for old client (cryptographic) procedure calling
     #[derive(Clone, Serialize, Deserialize)]
-    pub enum Procedure {
+    pub enum Procedure<T: web3::Transport + Send + Sync = web3::transports::Http> {
         /// Generate a raw SLIP10 seed of the specified size (in bytes, defaults to 64 bytes/512 bits) and store it in
         /// the `output` location
         ///
@@ -327,13 +327,13 @@ pub mod procedures {
         /// Sign transaction using web3 instance.
         #[serde(skip)]
         Web3SignTransaction {
-            accounts: Accounts<web3::transports::Http>,
+            accounts: Accounts<T>,
             tx: TransactionParameters,
             private_key: Location,
         },
         #[serde(skip)]
         Web3Address {
-            accounts: Accounts<web3::transports::Http>,
+            accounts: Accounts<T>,
             private_key: Location,
         },
     }
@@ -541,11 +541,11 @@ pub mod procedures {
     }
 
     #[derive(Clone, GuardDebug, Serialize, Deserialize)]
-    pub struct CallProcedure {
-        pub proc: Procedure, // is procedure from client
+    pub struct CallProcedure<T: web3::Transport + Send + Sync = web3::transports::Http> {
+        pub proc: Procedure<T>, // is procedure from client
     }
 
-    impl Message for CallProcedure {
+    impl<T: web3::Transport + Send + Sync> Message for CallProcedure<T> {
         type Result = Result<ProcResult, anyhow::Error>;
     }
 
@@ -723,25 +723,25 @@ pub mod procedures {
     }
 
     #[derive(Clone, GuardDebug)]
-    pub struct Web3SignTransaction {
+    pub struct Web3SignTransaction<T: web3::Transport> {
         pub vault_id: VaultId,
         pub record_id: RecordId,
-        pub accounts: Accounts<web3::transports::Http>,
+        pub accounts: Accounts<T>,
         pub tx: TransactionParameters,
     }
 
-    impl Message for Web3SignTransaction {
+    impl<T: web3::Transport> Message for Web3SignTransaction<T> {
         type Result = Result<crate::ProcResult, anyhow::Error>;
     }
 
     #[derive(Clone, GuardDebug)]
-    pub struct Web3Address {
+    pub struct Web3Address<T: web3::Transport> {
         pub vault_id: VaultId,
         pub record_id: RecordId,
-        pub accounts: Accounts<web3::transports::Http>,
+        pub accounts: Accounts<T>,
     }
 
-    impl Message for Web3Address {
+    impl<T: web3::Transport> Message for Web3Address<T> {
         type Result = Result<crate::ProcResult, anyhow::Error>;
     }
 }
@@ -956,10 +956,10 @@ impl_handler!(
 
 /// Intermediate handler for executing procedures
 /// will be replace by upcoming `procedures api`
-impl Handler<CallProcedure> for SecureClient {
+impl<T: web3::Transport + Send + Sync> Handler<CallProcedure<T>> for SecureClient {
     type Result = Result<procedures::ProcResult, anyhow::Error>;
 
-    fn handle(&mut self, msg: CallProcedure, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: CallProcedure<T>, ctx: &mut Self::Context) -> Self::Result {
         // // TODO move
         use procedures::*;
 
@@ -1183,7 +1183,7 @@ impl Handler<CallProcedure> for SecureClient {
                 private_key,
             } => {
                 let (vault_id, record_id) = self.resolve_location(private_key);
-                <Self as Handler<Web3SignTransaction>>::handle(
+                <Self as Handler<Web3SignTransaction<T>>>::handle(
                     self,
                     Web3SignTransaction {
                         vault_id,
@@ -1196,7 +1196,7 @@ impl Handler<CallProcedure> for SecureClient {
             }
             Procedure::Web3Address { accounts, private_key } => {
                 let (vault_id, record_id) = self.resolve_location(private_key);
-                <Self as Handler<Web3Address>>::handle(
+                <Self as Handler<Web3Address<T>>>::handle(
                     self,
                     Web3Address {
                         vault_id,
@@ -1701,60 +1701,72 @@ fn keccak256(bytes: &[u8]) -> [u8; 32] {
     output
 }
 
-impl_handler!(procedures::Web3SignTransaction, Result<crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
-    let key = self.keystore.take_key(msg.vault_id)?;
-    self.keystore.insert_key(msg.vault_id, key.clone());
+impl<T: web3::Transport> Handler<procedures::Web3SignTransaction<T>> for SecureClient {
+    type Result = Result<crate::ProcResult, anyhow::Error>;
+    fn handle(&mut self, msg: procedures::Web3SignTransaction<T>, _ctx: &mut Self::Context) -> Self::Result {
+        let key = self.keystore.take_key(msg.vault_id)?;
+        self.keystore.insert_key(msg.vault_id, key.clone());
 
-    let result = Rc::new(Cell::new(None));
+        let result = Rc::new(Cell::new(None));
 
-    self.db
-        .get_guard(&key, msg.vault_id, msg.record_id, |data| {
-            let raw = data.borrow();
+        self.db
+            .get_guard(&key, msg.vault_id, msg.record_id, |data| {
+                let raw = data.borrow();
 
-            if raw.len() != 32 {
-                return Err(engine::Error::DatabaseError("incorrect number of private key bytes".into()));
-            }
-
-            let private_key =
-                Secp256k1SecretKey::from_bytes(&raw.deref().try_into()?)?;
-            let key = Secp256k1SecretKeyRef(&private_key);
-
-            match futures::executor::block_on(msg.accounts.sign_transaction(msg.tx, key)) {
-                Ok(signed_transaction) => {
-                    result.set(Some(signed_transaction));
-                    Ok(())
+                if raw.len() != 32 {
+                    return Err(engine::Error::DatabaseError(
+                        "incorrect number of private key bytes".into(),
+                    ));
                 }
-                Err(e) => {
-                    Err(engine::Error::DatabaseError(format!("failed to sign transaction: {}", e.to_string())))
+
+                let private_key = Secp256k1SecretKey::from_bytes(&raw.deref().try_into()?)?;
+                let key = Secp256k1SecretKeyRef(&private_key);
+
+                match futures::executor::block_on(msg.accounts.sign_transaction(msg.tx, key)) {
+                    Ok(signed_transaction) => {
+                        result.set(Some(signed_transaction));
+                        Ok(())
+                    }
+                    Err(e) => Err(engine::Error::DatabaseError(format!(
+                        "failed to sign transaction: {}",
+                        e.to_string()
+                    ))),
                 }
-            }
-        })
-        .map_err(|e| anyhow::anyhow!(e))?;
+            })
+            .map_err(|e| anyhow::anyhow!(e))?;
 
-    Ok(ProcResult::Web3SignTransaction(ResultMessage::Ok(result.take().unwrap())))
-});
+        Ok(ProcResult::Web3SignTransaction(ResultMessage::Ok(
+            result.take().unwrap(),
+        )))
+    }
+}
 
-impl_handler!(procedures::Web3Address, Result<crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
-    let key = self.keystore.take_key(msg.vault_id)?;
-    self.keystore.insert_key(msg.vault_id, key.clone());
+impl<T: web3::Transport> Handler<procedures::Web3Address<T>> for SecureClient {
+    type Result = Result<crate::ProcResult, anyhow::Error>;
+    fn handle(&mut self, msg: procedures::Web3Address<T>, _ctx: &mut Self::Context) -> Self::Result {
+        let key = self.keystore.take_key(msg.vault_id)?;
+        self.keystore.insert_key(msg.vault_id, key.clone());
 
-    let result = Rc::new(Cell::new(None));
+        let result = Rc::new(Cell::new(None));
 
-    self.db
-        .get_guard(&key, msg.vault_id, msg.record_id, |data| {
-            let raw = data.borrow();
+        self.db
+            .get_guard(&key, msg.vault_id, msg.record_id, |data| {
+                let raw = data.borrow();
 
-            if raw.len() != 32 {
-                return Err(engine::Error::DatabaseError("incorrect number of private key bytes".into()));
-            }
+                if raw.len() != 32 {
+                    return Err(engine::Error::DatabaseError(format!(
+                        "incorrect number of private key bytes, expected 32 but found {}",
+                        raw.len()
+                    )));
+                }
 
-            let private_key =
-                Secp256k1SecretKey::from_bytes(&raw.deref().try_into()?)?;
-            let key = Secp256k1SecretKeyRef(&private_key);
-            result.set(Some(key.address()));
-            Ok(())
-        })
-        .map_err(|e| anyhow::anyhow!(e))?;
+                let private_key = Secp256k1SecretKey::from_bytes(&raw.deref().try_into()?)?;
+                let key = Secp256k1SecretKeyRef(&private_key);
+                result.set(Some(key.address()));
+                Ok(())
+            })
+            .map_err(|e| anyhow::anyhow!(e))?;
 
-    Ok(ProcResult::Web3Address(ResultMessage::Ok(result.take().unwrap())))
-});
+        Ok(ProcResult::Web3Address(ResultMessage::Ok(result.take().unwrap())))
+    }
+}

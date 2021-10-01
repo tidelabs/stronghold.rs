@@ -349,6 +349,21 @@ impl Stronghold {
         }
     }
 
+    /// Executes a runtime command given a [`Procedure`] with transport `T`.  Returns a [`ProcResult`] based off of the
+    /// control_request specified.
+    pub async fn web3_runtime_exec<T: web3::Transport + Send + Sync + 'static>(
+        &self,
+        control_request: Procedure<T>,
+    ) -> ProcResult {
+        match self.target.send(CallProcedure { proc: control_request }).await {
+            Ok(success) => match success {
+                Ok(result) => result,
+                Err(e) => ProcResult::Error(format!("{}", e)),
+            },
+            Err(e) => ProcResult::Error(format!("{}", e)),
+        }
+    }
+
     /// Checks whether a record exists in the client based off of the given [`Location`].
     pub async fn record_exists(&self, location: Location) -> bool {
         match self.target.send(CheckRecord { location }).await {
