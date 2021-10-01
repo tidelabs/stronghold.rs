@@ -319,6 +319,12 @@ pub mod procedures {
 
         /// Generate a secp256k1 secret key and store them in the `output` location.
         Secp256k1Generate { output: Location, hint: RecordHint },
+        /// Store a secp256k1 secret key in the `output` location.
+        Secp256k1Store {
+            key: Vec<u8>,
+            output: Location,
+            hint: RecordHint,
+        },
         /// Gets the public key associated with the secp256k1 secret key stored on the given location.
         Secp256k1PublicKey { private_key: Location },
         /// Use the specified secp256k1 secret key to sign the given message.
@@ -366,6 +372,8 @@ pub mod procedures {
         Sr25519Sign(ResultMessage<Sr25519Signature>),
         /// `Secp256k1Generate` return value.
         Secp256k1Generate(StatusMessage),
+        /// `Secp256k1Store` return value.
+        Secp256k1Store(StatusMessage),
         /// Return value for `Secp256k1PublicKey`. Returns a secp256k1 public key.
         Secp256k1PublicKey(ResultMessage<Secp256k1PublicKeyValue>),
         /// Return value for `Secp256k1Sign`. Returns a secp256k1 signature.
@@ -422,6 +430,7 @@ pub mod procedures {
                     Ok(ProcResult::Sr25519Sign(msg))
                 }
                 SerdeProcResult::Secp256k1Generate(msg) => Ok(ProcResult::Secp256k1Generate(msg)),
+                SerdeProcResult::Secp256k1Store(msg) => Ok(ProcResult::Secp256k1Store(msg)),
                 SerdeProcResult::Secp256k1PublicKey(msg) => {
                     let msg: ResultMessage<Secp256k1PublicKeyValue> = match msg {
                         ResultMessage::Ok(v) => ResultMessage::Ok(
@@ -463,6 +472,7 @@ pub mod procedures {
         Sr25519PublicKey(ResultMessage<Vec<u8>>),
         Sr25519Sign(ResultMessage<Vec<u8>>),
         Secp256k1Generate(StatusMessage),
+        Secp256k1Store(StatusMessage),
         Secp256k1PublicKey(ResultMessage<Vec<u8>>),
         Secp256k1Sign(ResultMessage<(Vec<u8>, u8)>),
         Error(String),
@@ -513,6 +523,7 @@ pub mod procedures {
                     SerdeProcResult::Sr25519Sign(msg)
                 }
                 ProcResult::Secp256k1Generate(msg) => SerdeProcResult::Secp256k1Generate(msg),
+                ProcResult::Secp256k1Store(msg) => SerdeProcResult::Secp256k1Store(msg),
                 ProcResult::Secp256k1PublicKey(msg) => {
                     let msg = match msg {
                         ResultMessage::Ok(public_key) => {
@@ -698,6 +709,18 @@ pub mod procedures {
     }
 
     impl Message for Secp256k1Generate {
+        type Result = Result<crate::ProcResult, anyhow::Error>;
+    }
+
+    #[derive(Clone, GuardDebug)]
+    pub struct Secp256k1Store {
+        pub key: Vec<u8>,
+        pub vault_id: VaultId,
+        pub record_id: RecordId,
+        pub hint: RecordHint,
+    }
+
+    impl Message for Secp256k1Store {
         type Result = Result<crate::ProcResult, anyhow::Error>;
     }
 
@@ -1160,6 +1183,19 @@ impl<T: web3::Transport + Send + Sync> Handler<CallProcedure<T>> for SecureClien
                     ctx,
                 )
             }
+            Procedure::Secp256k1Store { key, output, hint } => {
+                let (vault_id, record_id) = self.resolve_location(output);
+                <Self as Handler<Secp256k1Store>>::handle(
+                    self,
+                    Secp256k1Store {
+                        key,
+                        vault_id,
+                        record_id,
+                        hint,
+                    },
+                    ctx,
+                )
+            }
             Procedure::Secp256k1PublicKey { private_key } => {
                 let (vault_id, record_id) = self.resolve_location(private_key);
                 <Self as Handler<Secp256k1PublicKey>>::handle(self, Secp256k1PublicKey { vault_id, record_id }, ctx)
@@ -1590,6 +1626,23 @@ impl_handler!(procedures::Secp256k1Generate, Result<crate::ProcResult, anyhow::E
     let mut key = vec![0u8; SECP256K1_SECRET_KEY_LENGTH];
     fill(&mut key).map_err(|e| anyhow::anyhow!(e))?;
     let private_key = Secp256k1SecretKey::from_bytes(&key.try_into().unwrap()).map_err(|e| anyhow::anyhow!(e))?;
+
+    if !self.keystore.vault_exists(msg.vault_id) {
+        let key = self.keystore.create_key(msg.vault_id);
+        self.db.init_vault(key, msg.vault_id)?;
+    }
+    let key = self.keystore.take_key(msg.vault_id).unwrap();
+
+    self.keystore.insert_key(msg.vault_id, key.clone());
+
+    self.db
+        .write(&key, msg.vault_id, msg.record_id, &private_key.to_bytes(), msg.hint)?;
+
+    Ok(ProcResult::Secp256k1Generate(StatusMessage::OK))
+});
+
+impl_handler!(procedures::Secp256k1Store, Result<crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
+    let private_key = Secp256k1SecretKey::from_bytes(&msg.key.try_into().unwrap()).map_err(|e| anyhow::anyhow!(e))?;
 
     if !self.keystore.vault_exists(msg.vault_id) {
         let key = self.keystore.create_key(msg.vault_id);
