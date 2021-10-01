@@ -52,6 +52,12 @@ pub struct Stronghold {
     network_actor: Option<Addr<NetworkActor>>,
 }
 
+impl std::fmt::Debug for Stronghold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Stronghold").finish()
+    }
+}
+
 impl Stronghold {
     /// Initializes a new instance of the system asynchronously.  Sets up the first client actor. Accepts
     /// the first client_path: `Vec<u8>` and any `StrongholdFlags` which pertain to the first actor.

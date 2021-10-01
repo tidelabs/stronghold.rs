@@ -20,7 +20,7 @@ use actix::{Actor, ActorContext, Context, Handler, Message, Supervised};
 use web3::{
     api::Accounts,
     signing::{Key as Web3Key, Signature, SigningError},
-    types::{Address as Web3Address, SignedTransaction, TransactionParameters, H256},
+    types::{Address as Web3AddressType, SignedTransaction, TransactionParameters, H256},
 };
 
 use crypto::{
@@ -331,6 +331,11 @@ pub mod procedures {
             tx: TransactionParameters,
             private_key: Location,
         },
+        #[serde(skip)]
+        Web3Address {
+            accounts: Accounts<web3::transports::Http>,
+            private_key: Location,
+        },
     }
 
     #[derive(GuardDebug, Clone, Serialize, Deserialize)]
@@ -367,6 +372,8 @@ pub mod procedures {
         Secp256k1Sign(ResultMessage<(Secp256k1Signature, Secp256k1RecoveryId)>),
         /// Return value for `Web3SignTransaction`. Returns the data for offline signed transaction.
         Web3SignTransaction(ResultMessage<SignedTransaction>),
+        /// Return value for `Web3Address`. Returns the web3 address.
+        Web3Address(ResultMessage<web3::types::Address>),
 
         /// Generic Error return message.
         Error(String),
@@ -527,6 +534,7 @@ pub mod procedures {
                     SerdeProcResult::Secp256k1Sign(msg)
                 }
                 ProcResult::Web3SignTransaction(_msg) => panic!("unexpected `Web3SignTransaction` result"),
+                ProcResult::Web3Address(_msg) => panic!("unexpected `Web3Address` result"),
                 ProcResult::Error(err) => SerdeProcResult::Error(err),
             }
         }
@@ -723,6 +731,17 @@ pub mod procedures {
     }
 
     impl Message for Web3SignTransaction {
+        type Result = Result<crate::ProcResult, anyhow::Error>;
+    }
+
+    #[derive(Clone, GuardDebug)]
+    pub struct Web3Address {
+        pub vault_id: VaultId,
+        pub record_id: RecordId,
+        pub accounts: Accounts<web3::transports::Http>,
+    }
+
+    impl Message for Web3Address {
         type Result = Result<crate::ProcResult, anyhow::Error>;
     }
 }
@@ -1171,6 +1190,18 @@ impl Handler<CallProcedure> for SecureClient {
                         record_id,
                         accounts,
                         tx,
+                    },
+                    ctx,
+                )
+            }
+            Procedure::Web3Address { accounts, private_key } => {
+                let (vault_id, record_id) = self.resolve_location(private_key);
+                <Self as Handler<Web3Address>>::handle(
+                    self,
+                    Web3Address {
+                        vault_id,
+                        record_id,
+                        accounts,
                     },
                     ctx,
                 )
@@ -1650,14 +1681,14 @@ impl<'a> Web3Key for Secp256k1SecretKeyRef<'a> {
         Ok(Signature { v, r, s })
     }
 
-    fn address(&self) -> Web3Address {
+    fn address(&self) -> Web3AddressType {
         let public_key = self.0.public_key();
         let public_key = public_key.to_bytes();
 
         debug_assert_eq!(public_key[0], 0x04);
         let hash = keccak256(&public_key[1..]);
 
-        Web3Address::from_slice(&hash[12..])
+        Web3AddressType::from_slice(&hash[12..])
     }
 }
 
@@ -1701,4 +1732,29 @@ impl_handler!(procedures::Web3SignTransaction, Result<crate::ProcResult, anyhow:
         .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(ProcResult::Web3SignTransaction(ResultMessage::Ok(result.take().unwrap())))
+});
+
+impl_handler!(procedures::Web3Address, Result<crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
+    let key = self.keystore.take_key(msg.vault_id)?;
+    self.keystore.insert_key(msg.vault_id, key.clone());
+
+    let result = Rc::new(Cell::new(None));
+
+    self.db
+        .get_guard(&key, msg.vault_id, msg.record_id, |data| {
+            let raw = data.borrow();
+
+            if raw.len() != 32 {
+                return Err(engine::Error::DatabaseError("incorrect number of private key bytes".into()));
+            }
+
+            let private_key =
+                Secp256k1SecretKey::from_bytes(&raw.deref().try_into()?)?;
+            let key = Secp256k1SecretKeyRef(&private_key);
+            result.set(Some(key.address()));
+            Ok(())
+        })
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok(ProcResult::Web3Address(ResultMessage::Ok(result.take().unwrap())))
 });
