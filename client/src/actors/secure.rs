@@ -1714,6 +1714,7 @@ impl_handler!(procedures::Secp256k1Sign, Result<crate::ProcResult, anyhow::Error
 
 struct Secp256k1SecretKeyRef<'a>(&'a Secp256k1SecretKey);
 
+// taken from https://github.com/tomusdrw/rust-web3/blob/2711cd00d51bbfa6be1996cebdd991f7ed77115c/src/signing.rs#L101
 impl<'a> Web3Key for Secp256k1SecretKeyRef<'a> {
     fn sign(&self, message: &[u8], chain_id: Option<u64>) -> Result<Signature, SigningError> {
         let (signature, recovery_id) = self.0.sign(
