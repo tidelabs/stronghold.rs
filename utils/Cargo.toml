@@ -1,6 +1,7 @@
 [package]
 name = "stronghold-utils"
 version = "0.3.0"
+publish = false
 authors = [
   "IOTA Stiftung",
   "tensor-programming <tensordeveloper@gmail.com>"

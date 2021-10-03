@@ -1,6 +1,7 @@
 [package]
 name = "stronghold-p2p"
 version = "0.3.0"
+publish = false
 authors = [
   "IOTA Stiftung",
   "Elena Frank <elena.frank@iota.org"
