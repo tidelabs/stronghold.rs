@@ -399,6 +399,12 @@ impl Into<Vec<u8>> for ClientId {
     }
 }
 
+impl Into<Vec<u8>> for RecordId {
+    fn into(self) -> Vec<u8> {
+        self.0 .0.to_vec()
+    }
+}
+
 impl AsRef<[u8]> for ClientId {
     fn as_ref(&self) -> &[u8] {
         &self.0 .0
