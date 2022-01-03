@@ -10,7 +10,7 @@ use std::time::Duration;
 
 #[derive(Clone)]
 pub struct SecureBucket {
-    pub(crate) db: DbView<Provider>,
+    pub db: DbView<Provider>,
 
     pub client_id: ClientId,
 
