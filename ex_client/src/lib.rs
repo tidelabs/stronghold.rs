@@ -6,7 +6,11 @@ mod utils;
 
 use thiserror::Error as DeriveError;
 
-pub use engine::vault::{ClientId, RecordHint};
+pub use engine::{
+    vault::{ClientId, RecordHint},
+    Error as EngineError,
+};
+
 pub use internal::{
     derive_vault_id, naive_kdf, resolve_location, Key, KeyStore, Provider, SecureBucket, Snapshot, SnapshotState,
 };
