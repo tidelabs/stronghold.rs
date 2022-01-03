@@ -1,6 +1,7 @@
 // Stronghold client for Stronghold_ex
 
 mod internal;
+mod procs;
 mod utils;
 
 use thiserror::Error as DeriveError;
@@ -9,6 +10,7 @@ pub use engine::vault::{ClientId, RecordHint};
 pub use internal::{
     derive_vault_id, naive_kdf, resolve_location, Key, KeyStore, Provider, SecureBucket, Snapshot, SnapshotState,
 };
+pub use procs::{public_key_inner, sr25519_sign_inner};
 pub use utils::{LoadFromPath, Location};
 
 #[macro_export]
