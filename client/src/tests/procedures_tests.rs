@@ -4,7 +4,7 @@
 #![allow(non_snake_case)]
 
 use super::fresh;
-use crate::{ProcResult, Procedure, ResultMessage, SLIP10DeriveInput, Stronghold};
+use crate::{Location, ProcResult, Procedure, ResultMessage, SLIP10DeriveInput, Stronghold};
 use crypto::{keys::bip39, utils::rand::fill};
 
 async fn setup_stronghold() -> (Vec<u8>, Stronghold) {
@@ -249,11 +249,11 @@ async fn usecase_sr25519() {
 async fn usecase_secp256k1() {
     let (_cp, sh) = setup_stronghold().await;
 
-    let seed = fresh::location();
+    let secret = fresh::location();
 
     match sh
         .runtime_exec(Procedure::Secp256k1Generate {
-            output: seed.clone(),
+            output: secret.clone(),
             hint: fresh::record_hint(),
         })
         .await
@@ -262,9 +262,50 @@ async fn usecase_secp256k1() {
         r => panic!("unexpected result: {:?}", r),
     }
 
+    test_secp256k1_seed(sh, secret).await;
+}
+
+#[actix::test]
+async fn usecase_secp256k1_from_bip39() {
+    let (_cp, sh) = setup_stronghold().await;
+
+    let seed = fresh::location();
+
+    match sh
+        .runtime_exec(Procedure::BIP39Generate {
+            passphrase: fresh::passphrase(),
+            output: seed.clone(),
+            hint: fresh::record_hint(),
+        })
+        .await
+    {
+        ProcResult::BIP39Generate(ResultMessage::OK) => (),
+        r => panic!("unexpected result: {:?}", r),
+    }
+
+    let secret = fresh::location();
+    let (_path, chain) = fresh::hd_path();
+
+    match sh
+        .runtime_exec(Procedure::Secp256k1DeriveFromBIP39Seed {
+            chain,
+            input: seed.clone(),
+            output: secret.clone(),
+            hint: fresh::record_hint(),
+        })
+        .await
+    {
+        ProcResult::Secp256k1DeriveFromBIP39Seed(ResultMessage::OK) => (),
+        r => panic!("unexpected result: {:?}", r),
+    }
+
+    test_secp256k1_seed(sh, secret).await;
+}
+
+async fn test_secp256k1_seed(sh: Stronghold, secret: Location) {
     let pk = match sh
         .runtime_exec(Procedure::Secp256k1PublicKey {
-            private_key: seed.clone(),
+            private_key: secret.clone(),
         })
         .await
     {
@@ -276,7 +317,7 @@ async fn usecase_secp256k1() {
 
     let (sig, recovery_id) = match sh
         .runtime_exec(Procedure::Secp256k1Sign {
-            private_key: seed,
+            private_key: secret,
             msg: Box::new(msg),
         })
         .await
