@@ -26,13 +26,13 @@ use web3::{
 use crypto::{
     keys::{
         bip39,
-        slip10::{self, Chain, Curve, Seed},
+        slip10::{self, Chain, Curve, Seed as Slip10Seed},
     },
     signatures::{
         ed25519,
         secp256k1::{
             PublicKey as Secp256k1PublicKeyValue, RecoveryId as Secp256k1RecoveryId, SecretKey as Secp256k1SecretKey,
-            Signature as Secp256k1Signature, PUBLIC_KEY_LENGTH as SECP256K1_PUBLIC_KEY_LENGTH,
+            Seed as Secp256k1Seed, Signature as Secp256k1Signature, PUBLIC_KEY_LENGTH as SECP256K1_PUBLIC_KEY_LENGTH,
             SECRET_KEY_LENGTH as SECP256K1_SECRET_KEY_LENGTH, SIGNATURE_LENGTH as SECP256K1_SIGNATURE_LENGTH,
         },
         sr25519::{
@@ -319,6 +319,13 @@ pub mod procedures {
 
         /// Generate a secp256k1 secret key and store them in the `output` location.
         Secp256k1Generate { output: Location, hint: RecordHint },
+        /// Derive a Secp256k1 secret key from a BIP39 seed, store it in output location.
+        Secp256k1DeriveFromBIP39Seed {
+            chain: Chain,
+            input: Location,
+            output: Location,
+            hint: RecordHint,
+        },
         /// Store a secp256k1 secret key in the `output` location.
         Secp256k1Store {
             key: Vec<u8>,
@@ -372,6 +379,8 @@ pub mod procedures {
         Sr25519Sign(ResultMessage<Sr25519Signature>),
         /// `Secp256k1Generate` return value.
         Secp256k1Generate(StatusMessage),
+        /// `Secp256k1DeriveFromBIP39Seed` return value.
+        Secp256k1DeriveFromBIP39Seed(StatusMessage),
         /// `Secp256k1Store` return value.
         Secp256k1Store(StatusMessage),
         /// Return value for `Secp256k1PublicKey`. Returns a secp256k1 public key.
@@ -430,6 +439,7 @@ pub mod procedures {
                     Ok(ProcResult::Sr25519Sign(msg))
                 }
                 SerdeProcResult::Secp256k1Generate(msg) => Ok(ProcResult::Secp256k1Generate(msg)),
+                SerdeProcResult::Secp256k1DeriveFromBIP39Seed(msg) => Ok(ProcResult::Secp256k1DeriveFromBIP39Seed(msg)),
                 SerdeProcResult::Secp256k1Store(msg) => Ok(ProcResult::Secp256k1Store(msg)),
                 SerdeProcResult::Secp256k1PublicKey(msg) => {
                     let msg: ResultMessage<Secp256k1PublicKeyValue> = match msg {
@@ -472,6 +482,7 @@ pub mod procedures {
         Sr25519PublicKey(ResultMessage<Vec<u8>>),
         Sr25519Sign(ResultMessage<Vec<u8>>),
         Secp256k1Generate(StatusMessage),
+        Secp256k1DeriveFromBIP39Seed(StatusMessage),
         Secp256k1Store(StatusMessage),
         Secp256k1PublicKey(ResultMessage<Vec<u8>>),
         Secp256k1Sign(ResultMessage<(Vec<u8>, u8)>),
@@ -523,6 +534,7 @@ pub mod procedures {
                     SerdeProcResult::Sr25519Sign(msg)
                 }
                 ProcResult::Secp256k1Generate(msg) => SerdeProcResult::Secp256k1Generate(msg),
+                ProcResult::Secp256k1DeriveFromBIP39Seed(msg) => SerdeProcResult::Secp256k1DeriveFromBIP39Seed(msg),
                 ProcResult::Secp256k1Store(msg) => SerdeProcResult::Secp256k1Store(msg),
                 ProcResult::Secp256k1PublicKey(msg) => {
                     let msg = match msg {
@@ -709,6 +721,20 @@ pub mod procedures {
     }
 
     impl Message for Secp256k1Generate {
+        type Result = Result<crate::ProcResult, anyhow::Error>;
+    }
+
+    #[derive(Clone, GuardDebug)]
+    pub struct Secp256k1DeriveFromBIP39Seed {
+        pub chain: Chain,
+        pub seed_vault_id: VaultId,
+        pub seed_record_id: RecordId,
+        pub output_vault_id: VaultId,
+        pub output_record_id: RecordId,
+        pub hint: RecordHint,
+    }
+
+    impl Message for Secp256k1DeriveFromBIP39Seed {
         type Result = Result<crate::ProcResult, anyhow::Error>;
     }
 
@@ -1183,6 +1209,27 @@ impl<T: web3::Transport + Send + Sync> Handler<CallProcedure<T>> for SecureClien
                     ctx,
                 )
             }
+            Procedure::Secp256k1DeriveFromBIP39Seed {
+                chain,
+                input,
+                output,
+                hint,
+            } => {
+                let (seed_vault_id, seed_record_id) = self.resolve_location(input);
+                let (output_vault_id, output_record_id) = self.resolve_location(output);
+                <Self as Handler<Secp256k1DeriveFromBIP39Seed>>::handle(
+                    self,
+                    Secp256k1DeriveFromBIP39Seed {
+                        chain,
+                        seed_vault_id,
+                        seed_record_id,
+                        output_vault_id,
+                        output_record_id,
+                        hint,
+                    },
+                    ctx,
+                )
+            }
             Procedure::Secp256k1Store { key, output, hint } => {
                 let (vault_id, record_id) = self.resolve_location(output);
                 <Self as Handler<Secp256k1Store>>::handle(
@@ -1304,7 +1351,7 @@ impl_handler!(procedures::SLIP10DeriveFromSeed, Result<crate::ProcResult, anyhow
         msg.key_record_id,
         msg.hint,
         |gdata| {
-            let dk = Seed::from_bytes(&gdata.borrow())
+            let dk = Slip10Seed::from_bytes(&gdata.borrow())
                 .derive(Curve::Ed25519, &msg.chain)
                 .map_err(|e| anyhow::anyhow!(e))
                 .unwrap();
@@ -1639,6 +1686,53 @@ impl_handler!(procedures::Secp256k1Generate, Result<crate::ProcResult, anyhow::E
         .write(&key, msg.vault_id, msg.record_id, &private_key.to_bytes(), msg.hint)?;
 
     Ok(ProcResult::Secp256k1Generate(StatusMessage::OK))
+});
+
+impl_handler!(procedures::Secp256k1DeriveFromBIP39Seed, Result<crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
+    let seed_key = self
+        .keystore
+        .take_key(msg.seed_vault_id)?;
+
+    if !self.keystore.vault_exists(msg.output_vault_id) {
+        let key = self.keystore.create_key(msg.output_vault_id);
+        match self.db.init_vault(key, msg.output_vault_id) {
+            Ok(_) => {},
+            Err(e) => {
+                self.keystore.insert_key(msg.seed_vault_id, seed_key);
+                return Err(anyhow::anyhow!(e))
+            }
+        }
+    }
+    let dk_key = self.keystore.take_key(msg.output_vault_id).unwrap();
+
+    // FIXME if you see this fix here, that a single-threaded mutable reference
+    // is being passed into the closure to obtain the result of the pro-
+    // cedure calculation, you should consider rethinking this approach.
+
+    let res = self.db.exec_proc(
+        &seed_key,
+        msg.seed_vault_id,
+        msg.seed_record_id,
+        &dk_key,
+        msg.output_vault_id,
+        msg.output_record_id,
+        msg.hint,
+        |gdata| {
+            let dk = Secp256k1Seed::from_bytes(&gdata.borrow())
+                .derive(&msg.chain)
+                .map_err(|e| anyhow::anyhow!(e))
+                .unwrap();
+            Ok(dk.secret_key().to_bytes().to_vec())
+        },
+    );
+
+    self.keystore.insert_key(msg.seed_vault_id, seed_key);
+    self.keystore.insert_key(msg.output_vault_id, dk_key);
+
+    match res {
+        Ok(_) => Ok(ProcResult::Secp256k1DeriveFromBIP39Seed(StatusMessage::OK)),
+        Err(e) => Err(anyhow::anyhow!(e)),
+    }
 });
 
 impl_handler!(procedures::Secp256k1Store, Result<crate::ProcResult, anyhow::Error>, (self, msg, _ctx), {
