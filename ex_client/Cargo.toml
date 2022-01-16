@@ -25,7 +25,7 @@ path = "../engine"
 version = "0.4"
 
 [dependencies.iota-crypto]
-git = "https://tributary.semantic-network.tech/semnet/crypto.rs"
+git = "https://tributary.semantic-network.tech/semnet/Libs/crypto.rs"
 branch = "dev"
 features = [
 "random",
