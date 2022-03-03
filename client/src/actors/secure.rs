@@ -1832,6 +1832,21 @@ impl<'a> Web3Key for Secp256k1SecretKeyRef<'a> {
         Ok(Signature { v, r, s })
     }
 
+    fn sign_message(&self, message: &[u8]) -> Result<Signature, SigningError> {
+        let (signature, recovery_id) = self.0.sign(
+            message[0..32]
+                .try_into()
+                .expect("secp256k1 message must contain exactly 32 bytes"),
+        );
+
+        let v = recovery_id.as_u8() as u64;
+        let signature = signature.to_bytes();
+        let r = H256::from_slice(&signature[..32]);
+        let s = H256::from_slice(&signature[32..]);
+
+        Ok(Signature { v, r, s })
+    }
+
     fn address(&self) -> Web3AddressType {
         let public_key = self.0.public_key();
         let public_key = public_key.to_bytes();

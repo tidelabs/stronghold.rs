@@ -24,7 +24,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 actix = "0.12"
 futures = "0.3"
-web3 = "0.17"
+web3 = { git = "https://github.com/tomusdrw/rust-web3", rev = "8796c88c4cb95864bdfeffb40ebb061c283aca74" }
 tiny-keccak = "2.0"
 
 [dependencies.stronghold_engine]
