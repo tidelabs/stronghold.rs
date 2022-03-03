@@ -34,7 +34,11 @@ pub fn sr25519_sign_inner(
         Ok(())
     })?;
 
-    Ok(Signature::from_slice(&res))
+    if let Some(sig) = Signature::from_slice(&res) {
+        Ok(sig)
+    } else {
+        Err(crate::Error::SignatureError)
+    }
 }
 
 pub fn public_key_inner(mut bucket: SecureBucket, mut keystore: KeyStore, loc: Location) -> crate::Result<[u8; 32]> {

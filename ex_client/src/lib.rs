@@ -48,6 +48,9 @@ pub enum Error {
 
     #[error("Could not load client by path ({0})")]
     LoadClientByPathError(String),
+
+    #[error("Couldn't convert signature")]
+    SignatureError,
 }
 
 #[derive(DeriveError, Debug)]
