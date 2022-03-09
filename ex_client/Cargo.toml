@@ -13,7 +13,7 @@ zeroize_derive = "1.0"
 anyhow = "1.0"
 thiserror = "1.0"
 futures = { version = "0.3", optional = true }
-subxt = { git = "https://tributary.semantic-network.tech/semnet/tidefi/substrate/substrate-subxt", branch = "tidechain" }
+subxt = { git = "https://github.com/tide-labs/subxt", branch = "tidechain" }
 
 [dependencies.stronghold-utils]
 path = "../utils"
@@ -24,7 +24,7 @@ path = "../engine"
 version = "0.4"
 
 [dependencies.iota-crypto]
-git = "https://tributary.semantic-network.tech/semnet/Libs/crypto.rs"
+git = "https://github.com/tide-labs/crypto.rs"
 branch = "dev"
 features = [
 "random",
