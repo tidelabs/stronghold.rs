@@ -37,7 +37,7 @@ optional = true
 default-features = false
 
 [dependencies.iota-crypto]
-git = "https://tributary.semantic-network.tech/semnet/Libs/crypto.rs"
+git = "https://github.com/tide-labs/crypto.rs"
 branch = "dev"
 features = [ "random", "chacha", "hmac", "sha", "x25519", "blake2b" ]
 
