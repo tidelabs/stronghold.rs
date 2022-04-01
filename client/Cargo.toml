@@ -32,7 +32,7 @@ path = "../engine"
 version = "0.4"
 
 [dependencies.iota-crypto]
-git = "https://github.com/tide-labs/crypto.rs"
+git = "https://github.com/tidelabs/crypto.rs"
 branch = "dev"
 features = [
 "random",
