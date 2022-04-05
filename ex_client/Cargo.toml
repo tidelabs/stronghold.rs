@@ -13,7 +13,6 @@ zeroize_derive = "1.0"
 anyhow = "1.0"
 thiserror = "1.0"
 futures = { version = "0.3", optional = true }
-subxt = { git = "https://github.com/tidelabs/subxt", branch = "tidechain" }
 
 [dependencies.stronghold-utils]
 path = "../utils"
