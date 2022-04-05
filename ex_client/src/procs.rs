@@ -1,8 +1,6 @@
 use crate::{resolve_location, KeyStore, Location, SecureBucket};
 
-use subxt::sp_core::sr25519::Signature;
-
-use crypto::signatures::sr25519::KeyPair as Sr25519KeyPair;
+use crypto::signatures::sr25519::{KeyPair as Sr25519KeyPair, Signature};
 
 pub fn sr25519_sign_inner(
     mut bucket: SecureBucket,
@@ -34,11 +32,7 @@ pub fn sr25519_sign_inner(
         Ok(())
     })?;
 
-    if let Some(sig) = Signature::from_slice(&res) {
-        Ok(sig)
-    } else {
-        Err(crate::Error::SignatureError)
-    }
+    Signature::from_slice(&res).map_err(|_| crate::Error::SignatureError)
 }
 
 pub fn public_key_inner(mut bucket: SecureBucket, mut keystore: KeyStore, loc: Location) -> crate::Result<[u8; 32]> {
