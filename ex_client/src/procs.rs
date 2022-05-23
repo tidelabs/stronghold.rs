@@ -8,11 +8,17 @@ pub fn sr25519_generate_seed(
     mut bucket: SecureBucket,
     mut keystore: KeyStore,
     mnemonic_or_seed: Option<String>,
-    passphrase: String,
+    passphrase: Option<String>,
     output: Location,
 ) -> crate::Result<()> {
     let (vid, rid) = resolve_location(output);
     let hint = RecordHint::new(b"seed").map_err(|_| crate::Error::CryptoError("Failed to generate hint".into()))?;
+
+    let passphrase = if let Some(pass) = passphrase {
+        pass
+    } else {
+        String::from("")
+    };
 
     let keypair = if let Some(mnemonic) = mnemonic_or_seed {
         Sr25519KeyPair::from_string(&mnemonic, Some(&passphrase))
