@@ -51,6 +51,9 @@ pub enum Error {
 
     #[error("Couldn't convert signature")]
     SignatureError,
+
+    #[error("Crypto error: {0}")]
+    CryptoError(String),
 }
 
 #[derive(DeriveError, Debug)]
