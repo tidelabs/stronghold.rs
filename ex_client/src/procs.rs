@@ -1,6 +1,47 @@
-use crate::{resolve_location, KeyStore, Location, SecureBucket};
+use crate::{resolve_location, KeyStore, Location, RecordHint, SecureBucket};
 
+use crypto::keys::bip39;
 use crypto::signatures::sr25519::{KeyPair as Sr25519KeyPair, Signature};
+use crypto::utils::rand;
+
+pub fn sr25519_generate_seed(
+    mut bucket: SecureBucket,
+    mut keystore: KeyStore,
+    mnemonic_or_seed: Option<String>,
+    passphrase: String,
+    output: Location,
+) -> crate::Result<()> {
+    let (vid, rid) = resolve_location(output);
+    let hint = RecordHint::new(b"seed").map_err(|_| crate::Error::CryptoError("Failed to generate hint".into()))?;
+
+    let keypair = if let Some(mnemonic) = mnemonic_or_seed {
+        Sr25519KeyPair::from_string(&mnemonic, Some(&passphrase))
+            .map_err(|_| crate::Error::CryptoError("Couldn't create keypair".into()))?
+    } else {
+        let mut entropy = [0u8; 32];
+        rand::fill(&mut entropy).map_err(|_| crate::Error::CryptoError("Failed to generate entropy".into()))?;
+
+        let mnemonic = bip39::wordlist::encode(&entropy, &bip39::wordlist::ENGLISH)
+            .map_err(|_| crate::Error::CryptoError("Failed to call bip39".into()))?;
+
+        Sr25519KeyPair::from_string(&mnemonic, Some(&passphrase))
+            .map_err(|_| crate::Error::CryptoError("Couldn't create keypair".into()))?
+    };
+
+    if !keystore.vault_exists(vid) {
+        keystore.create_key(vid);
+    }
+
+    let key = keystore
+        .take_key(vid)
+        .map_err(|_| crate::Error::KeyStoreError("Failed to take key".into()))?;
+
+    keystore.insert_key(vid, key.clone());
+
+    bucket.db.write(&key, vid, rid, &keypair.seed(), hint)?;
+
+    Ok(())
+}
 
 pub fn sr25519_sign_inner(
     mut bucket: SecureBucket,
