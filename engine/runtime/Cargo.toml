@@ -22,7 +22,12 @@ serde = { version = "1.0", features = [ "derive" ] }
 random = { version = "0.8.4", package = "rand" }
 dirs = { version = "4.0.0" }
 thiserror = { version = "1.0" }
-iota-crypto = { version = "0.8.0", features = [ "blake2b" ] }
+
+
+[dependencies.iota-crypto]
+git = "https://github.com/tidelabs/crypto.rs"
+branch = "dev"
+features = [ "blake2b"]
 
 [dev-dependencies]
 serde_json = { version = "1.0" }

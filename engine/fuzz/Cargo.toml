@@ -15,11 +15,12 @@ rand = "0.8.3"
 
 [dependencies.stronghold_engine]
 path = "../"
-version = "0.4"
+version = "0.5.2"
 
 [dependencies.iota-crypto]
-version = "0.7.0"
-features = [ "random", "chacha" ]
+git = "https://github.com/tidelabs/crypto.rs"
+branch = "dev"
+features = [ "random", "chacha"]
 
 [dependencies.generic-array]
 version = "0.14.4"

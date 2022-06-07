@@ -36,9 +36,11 @@ serde = { version = "1.0", features = [ "derive" ] }
   optional = true
   default-features = false
 
-  [dependencies.iota-crypto]
-  version = "0.8.0"
-  features = [ "random", "chacha", "hmac", "sha", "x25519", "blake2b" ]
+  
+[dependencies.iota-crypto]
+git = "https://github.com/tidelabs/crypto.rs"
+branch = "dev"
+features = [ "random", "chacha", "hmac", "sha", "x25519", "blake2b" ]
 
 [dev-dependencies]
 tempfile = "3.1.0"
