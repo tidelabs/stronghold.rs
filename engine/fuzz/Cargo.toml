@@ -1,9 +1,8 @@
 [package]
 name = "fuzz"
 version = "0.1.0"
-publish = false
 authors = ["tensor-programming <tensordeveloper@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,8 +18,7 @@ path = "../"
 version = "0.4"
 
 [dependencies.iota-crypto]
-git = "https://github.com/tidelabs/crypto.rs"
-branch = "dev"
+version = "0.7.0"
 features = [ "random", "chacha" ]
 
 [dependencies.generic-array]

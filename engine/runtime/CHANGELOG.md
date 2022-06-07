@@ -1,50 +1,52 @@
 # Changelog
 
-## \[0.3.0]
+## \[0.5.2]
 
-- Added zeroing allocator to the runtime.\
-  Placed zeroing allocator in the vualt.
-  - [a960e50](https://www.github.com/iotaledger/stronghold.rs/commit/a960e50a591e82e74df12093513a136594a5f8e6) add changes. on 2021-03-12
-- Add documentation and cleanup the code for these crates and modules in preparation for beta.
-  - [dae0457](https://www.github.com/iotaledger/stronghold.rs/commit/dae04579cb20ad69a7aecdf102fb66ecac4aaf46) Beta Cleanup ([#166](https://www.github.com/iotaledger/stronghold.rs/pull/166)) on 2021-03-19
-- Add functionality to enable the guarded memory allocator in the zone when
-  running on POSIX (Linux, MacOS targets). The major contribution is a toggleable
-  memory allocator that can be used to work around rust's enforcement of only
-  one `#[global_allocator]`.
-  - [7e68346](https://www.github.com/iotaledger/stronghold.rs/commit/7e6834669e0d458bbf152d0b8a0c18791b2a856e) Add a changelog message on 2021-01-04
-  - [42ed9d6](https://www.github.com/iotaledger/stronghold.rs/commit/42ed9d6b5fe93f7cf7ecb1b9591bd10de9c35e58) fix(covector) ([#162](https://www.github.com/iotaledger/stronghold.rs/pull/162)) on 2021-03-12
-- Address two new clippy warnings: `needless_lifetimes` (addressed in the vault)
-  and `unnecessary_cast` (ignored in the runtime since they are necessary for
-  portability: `0 as libc::c_char` is not necessarily the same as `0_u8`).
-  - [1614243](https://www.github.com/iotaledger/stronghold.rs/commit/161424322af84bd4626aac5a3f96b0c529d7b39a) Add a changelog message on 2021-01-04
-  - [42ed9d6](https://www.github.com/iotaledger/stronghold.rs/commit/42ed9d6b5fe93f7cf7ecb1b9591bd10de9c35e58) fix(covector) ([#162](https://www.github.com/iotaledger/stronghold.rs/pull/162)) on 2021-03-12
-- Remove Crypto, Random and Primitives libraries in favor of Crypto.rs
-  Moved Runtime into the engine.
-  Add new guarded types for Runtime and remove old logic.
+- bump all crate versions to update to new utils modules
+  - [29ad7932](https://www.github.com/iotaledger/stronghold.rs/commit/29ad7932550ec558915ec88c7f26408dd2c763e7) version: bump all crates to include updated utils on 2022-06-03
+  - [699117f7](https://www.github.com/iotaledger/stronghold.rs/commit/699117f7ea834c043596418f8ff2c502c477bf6b) version: bump all crates to include updated utils on 2022-06-03
+  - [34ada641](https://www.github.com/iotaledger/stronghold.rs/commit/34ada641a6ac987e9c17d8d71581a5083bd61911) fix: covector fixx crate name on 2022-06-03
+  - [092ce898](https://www.github.com/iotaledger/stronghold.rs/commit/092ce898a31440e4d5740f40952fbf711da8ce02) fix: covector fixx crate name on 2022-06-03
+  - [f01e99e3](https://www.github.com/iotaledger/stronghold.rs/commit/f01e99e319f286f2b094ee9efe88cf44a638fa45) version: reset to former versions on 2022-06-03
+  - [b441e6f4](https://www.github.com/iotaledger/stronghold.rs/commit/b441e6f476571f067cdddd93c9ae8370d59733ba) fix: versions on 2022-06-03
 
-## Features:
+## \[0.5.1]
 
-- Causes segfault upon access without borrow
-- Protects using mprotect
-- Adds guard pages proceeding and following the allocated memory.
-- Adds a canary pointer to detect underflows.
-- Locks memory with mlock.
-- Frees memory using munlock
-- Memory is zeroed when no longer in use through sodium_free
-- Can be compared in constant time
-- Can not be printed using debug
-- Can not be cloned using the Clone trait.
+- bump all crate versions to update to new utils crate
+  - [29ad7932](https://www.github.com/iotaledger/stronghold.rs/commit/29ad7932550ec558915ec88c7f26408dd2c763e7) version: bump all crates to include updated utils on 2022-06-03
+  - [699117f7](https://www.github.com/iotaledger/stronghold.rs/commit/699117f7ea834c043596418f8ff2c502c477bf6b) version: bump all crates to include updated utils on 2022-06-03
+  - [34ada641](https://www.github.com/iotaledger/stronghold.rs/commit/34ada641a6ac987e9c17d8d71581a5083bd61911) fix: covector fixx crate name on 2022-06-03
+  - [092ce898](https://www.github.com/iotaledger/stronghold.rs/commit/092ce898a31440e4d5740f40952fbf711da8ce02) fix: covector fixx crate name on 2022-06-03
 
-Implement guarded types in Vault to protect the data and the keys.
-Clean up logic inside of the Client library.
+## \[0.5.0]
 
-- [dd65b67](https://www.github.com/iotaledger/stronghold.rs/commit/dd65b67f42718150c7c7dbab9606ee2167cf11ce) add changes. on 2021-03-11
-- [829ecac](https://www.github.com/iotaledger/stronghold.rs/commit/829ecac2e8090d478706c673cd45f1b91a60b2de) fix(covector) ([#164](https://www.github.com/iotaledger/stronghold.rs/pull/164)) on 2021-03-12
+- Bump
+  - [6f1c160a](https://www.github.com/iotaledger/stronghold.rs/commit/6f1c160a3182f136868406bdca99022efd45dd67) Fix versions for covector on 2022-06-01
 
 ## \[0.2.0]
 
-- Add `arm` architecture mmap and linker for USB Armory.
-  - [2b20e85](https://www.github.com/iotaledger/stronghold.rs/commit/2b20e85fee1997a1739c66a12df14e4573eae60a) feat(target): arm-unknown-linux-gnueabihf target for usbarmory ([#90](https://www.github.com/iotaledger/stronghold.rs/pull/90)) on 2020-12-20
-- Alpha release of Stronghold: "Saint-Malo"
-  - [4b6f4af](https://www.github.com/iotaledger/stronghold.rs/commit/4b6f4af29f6c21044f5063ec4a8d8aff643f81a7) chore(release) ([#105](https://www.github.com/iotaledger/stronghold.rs/pull/105)) on 2020-12-24
-  - [06c6d51](https://www.github.com/iotaledger/stronghold.rs/commit/06c6d513dfcd1ba8ed6379177790ec6db28a6fea) fix(changelog): Alpha Release ([#106](https://www.github.com/iotaledger/stronghold.rs/pull/106)) on 2020-12-24
+- - Refactor Sink and Stream implementation for EventChannel
+- Add `CopyRecord` procedure.
+- In the `StrongholdP2p` Interface enable / disable mdns and relay functionality on init via config flags in the `StrongholdP2pBuilder`. Per default, both are enabled.
+- In the `Stronghold` client interface enable / disable mdns and relay in the `NetworkConfig` when spawning a new p2p-network actor. Per default, both are disabled.
+- Use `libp2p::swarm::toggle` to enable/ disable relay and mdns
+- Persist config and keypair of stronghold-p2p in client
+- Implement messages to write the keypair used for `StrongholdP2p` in the vault and derive the `PeerId` and a new noise `AuthenticKeypair` from it.
+- Implement API for the Stronghold Procedures
+- Make stronghold interface clonable
+- Update inline Docs and README files to reflect the current state of the project.
+- Add communication fuzzer for distributed fuzzing with docker.
+- Patch Stronghold engine fuzzer.
+- Patch crypto.rs version v0.7 -> v0.8.
+- Persist the state of stronghold-p2p in the `SecureClient` by serializing the `NetworkConfig` and writing it to the store.
+- Allow loading stored states into the `NetworkActor` on init.
+- Allow reuse of same `Keypair` that is stored in the vault.
+- Software transactional memory framework as replacement for actix actor system
+- Integration is runtime agnostic an can be used by any async runtime for rust, tkio is encouraged though
+- Extract `random` functions from `test_utils` into own module.
+- Remove Riker as dependency from utils.
+- Introduce KeyProvider instead of repeatedly providing a passphrase.
+- Introduce non-contiguous memory types for secure key handling.
+- Abstract over locked and encrypted data types for use internally.
+- Stronghold interface rewrite to work on type level with Stronghold as root type, Client as secure container, Store as insecure storage and ClientVault as vault access.
+- [3816aef5](https://www.github.com/iotaledger/stronghold.rs/commit/3816aef5111684ffbdbd12ed7f93b887e43e7a02) chore(release-doc): clean up outdated release notes, merge existing into one on 2022-05-31

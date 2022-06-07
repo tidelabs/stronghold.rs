@@ -1,30 +1,14 @@
-// Copyright 2021 IOTA Stiftung
+// Copyright 2020-2022 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-use crypto::{keys::slip10::Chain, signatures::sr25519::DeriveJunction, utils::rand::fill};
-pub use stronghold_utils::test_utils::{self, fresh::*};
+use crypto::keys::slip10::Chain;
+pub use stronghold_utils::{random::*, test_utils};
 
-use crate::{Location, RecordHint};
-
-/// Creates a random [`RecordHint`]
-pub fn record_hint() -> RecordHint {
-    let mut bs = [0; 24];
-    fill(&mut bs).expect("Unable to fill record hint");
-    bs.into()
-}
+use crate::Location;
 
 /// Generates a random [`Location`].
 pub fn location() -> Location {
-    Location::generic(bytestring(), bytestring())
-}
-
-/// generates a random string based on a coinflip.
-pub fn passphrase() -> Option<String> {
-    if coinflip() {
-        Some(string())
-    } else {
-        None
-    }
+    Location::generic(bytestring(4096), bytestring(4096))
 }
 
 /// Creates a random hd_path.
@@ -32,22 +16,9 @@ pub fn hd_path() -> (String, Chain) {
     let mut s = "m".to_string();
     let mut is = vec![];
     while coinflip() {
-        let i = rand::random::<u32>() & 0x7fffff;
-        s.push_str(&format!("/{}'", i.to_string()));
+        let i = random::<u32>() & 0x7fffff;
+        s.push_str(&format!("/{}'", i));
         is.push(i);
     }
     (s, Chain::from_u32_hardened(is))
-}
-
-pub fn sr25519_chain() -> Vec<DeriveJunction> {
-    let mut chain = Vec::new();
-    while coinflip() {
-        let b = rand::random::<[u8; 32]>();
-        chain.push(if coinflip() {
-            DeriveJunction::Hard(b)
-        } else {
-            DeriveJunction::Soft(b)
-        });
-    }
-    chain
 }

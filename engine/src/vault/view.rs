@@ -9,11 +9,39 @@ use crate::vault::{
     },
 };
 
+use runtime::memories::buffer::Buffer;
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, convert::Infallible, fmt::Debug};
+use thiserror::Error as DeriveError;
 
-use std::collections::HashMap;
+use super::{crypto_box::DecryptError, types::transactions::Transaction};
 
-use runtime::GuardedVec;
+#[derive(DeriveError, Debug)]
+pub enum VaultError<TProvErr: Debug, TProcErr: Debug = Infallible> {
+    #[error("vault `{0:?}` does not exist")]
+    VaultNotFound(VaultId),
+
+    #[error("record error: `{0:?}`")]
+    Record(#[from] RecordError<TProvErr>),
+
+    #[error("procedure error `{0:?}`")]
+    Procedure(TProcErr),
+}
+
+#[derive(DeriveError, Debug)]
+pub enum RecordError<TProvErr: Debug> {
+    #[error("provider error: `{0:?}`")]
+    Provider(TProvErr),
+
+    #[error("decrypted content does not match expected format: {0}")]
+    CorruptedContent(String),
+
+    #[error("invalid key provided")]
+    InvalidKey,
+
+    #[error("no record with `{0:?}`")]
+    RecordNotFound(ChainId),
+}
 
 /// A view over the data inside of a collection of [`Vault`] types.
 #[derive(Deserialize, Serialize, Clone, Default)]
@@ -51,10 +79,8 @@ impl<P: BoxProvider> DbView<P> {
     }
 
     /// Initialize a new [`Vault`] if it doesn't exist.
-    pub fn init_vault(&mut self, key: &Key<P>, vid: VaultId) -> crate::Result<()> {
-        self.vaults.entry(vid).or_insert(Vault::init_vault(key)?);
-
-        Ok(())
+    pub fn init_vault(&mut self, key: &Key<P>, vid: VaultId) {
+        self.vaults.entry(vid).or_insert_with(|| Vault::init_vault(key));
     }
 
     /// Write a new record to a [`Vault`]. Will instead update a [`Record`] if it already exists.
@@ -65,123 +91,226 @@ impl<P: BoxProvider> DbView<P> {
         rid: RecordId,
         data: &[u8],
         record_hint: RecordHint,
-    ) -> crate::Result<()> {
+    ) -> Result<(), RecordError<P::Error>> {
         if !self.vaults.contains_key(&vid) {
-            self.init_vault(key, vid)?;
+            self.init_vault(key, vid);
         }
 
-        self.vaults.entry(vid).and_modify(|vault| {
-            vault
-                .add_or_update_record(key, rid.0, data, record_hint)
-                .expect("unable to write record")
-        });
-
-        Ok(())
+        let vault = self.vaults.get_mut(&vid).expect("Vault was initiated");
+        vault.add_or_update_record(key, rid.0, data, record_hint)
     }
 
     /// Lists all of the [`RecordHint`] values and [`RecordId`] values for the given [`Vault`].
     pub fn list_hints_and_ids(&self, key: &Key<P>, vid: VaultId) -> Vec<(RecordId, RecordHint)> {
-        let buf: Vec<(RecordId, RecordHint)> = if let Some(vault) = self.vaults.get(&vid) {
+        if let Some(vault) = self.vaults.get(&vid) {
             vault.list_hints_and_ids(key)
         } else {
             vec![]
-        };
+        }
+    }
 
-        buf
+    /// Check to see if a vault with the given [`VaultId`] is present.
+    pub fn contains_vault(&self, vid: &VaultId) -> bool {
+        self.vaults.contains_key(vid)
     }
 
     /// Check to see if a [`Vault`] contains a [`Record`] through the given [`RecordId`].
-    pub fn contains_record(&mut self, key: &Key<P>, vid: VaultId, rid: RecordId) -> bool {
+    pub fn contains_record(&self, vid: VaultId, rid: RecordId) -> bool {
         if let Some(vault) = self.vaults.get(&vid) {
-            vault.contains_record(key, rid)
+            vault.contains_record(rid)
         } else {
             false
         }
     }
 
-    /// Get access the decrypted [`GuardedVec`] of the specified [`Record`].
-    pub fn get_guard<F>(&mut self, key: &Key<P>, vid: VaultId, rid: RecordId, f: F) -> crate::Result<()>
-    where
-        F: FnOnce(GuardedVec<u8>) -> crate::Result<()>,
-    {
-        if let Some(vault) = self.vaults.get_mut(&vid) {
-            let guard = vault.get_guard(key, rid.0)?;
-
-            f(guard)?;
-        }
-
-        Ok(())
+    /// Get the [`BlobId`] of the blob stored in the specified [`Record`].
+    /// The [`BlobId`] changes each time the record's content is updated.
+    pub fn get_blob_id(&self, key: &Key<P>, vid: VaultId, rid: RecordId) -> Result<BlobId, VaultError<P::Error>> {
+        let vault = self.vaults.get(&vid).ok_or(VaultError::VaultNotFound(vid))?;
+        let blob_id = vault.get_blob_id(key, rid.0)?;
+        Ok(blob_id)
     }
 
-    /// Access the decrypted [`GuardedVec`] of the specified [`Record`] and place the return value into the second
-    /// specified [`Record`]
-    #[allow(clippy::too_many_arguments)]
-    pub fn exec_proc<F>(
-        &mut self,
-        key0: &Key<P>,
-        vid0: VaultId,
-        rid0: RecordId,
-        key1: &Key<P>,
-        vid1: VaultId,
-        rid1: RecordId,
-        hint: RecordHint,
-        f: F,
-    ) -> crate::Result<()>
+    /// Get the buffers for the given records, using the provided key for access.
+    fn get_buffers<E, const N: usize>(
+        &self,
+        ids: [(Key<P>, VaultId, RecordId); N],
+    ) -> Result<[Buffer<u8>; N], VaultError<P::Error, E>>
     where
-        F: FnOnce(GuardedVec<u8>) -> crate::Result<Vec<u8>>,
+        E: Debug,
     {
-        if let Some(vault) = self.vaults.get_mut(&vid0) {
-            let guard = vault.get_guard(key0, rid0.0)?;
+        let mut buffers: Vec<Buffer<u8>> = Vec::with_capacity(N);
 
-            let data = f(guard)?;
+        for (key, vid, rid) in ids {
+            let vault = self.vaults.get(&vid).ok_or(VaultError::VaultNotFound(vid))?;
+            let guard = vault.get_guard(&key, rid.0).map_err(VaultError::Record)?;
 
-            if self.vaults.get(&vid1).is_none() {
-                self.init_vault(key1, vid1)?;
-            }
-
-            self.write(key1, vid1, rid1, &data, hint)?;
+            buffers.push(guard);
         }
 
-        Ok(())
+        let buffers: [Buffer<u8>; N] = <[_; N]>::try_from(buffers).expect("buffers did not have exactly len N");
+
+        Ok(buffers)
+    }
+
+    /// Get access the decrypted [`Buffer`] of the specified [`Record`].
+    pub fn get_guard<E, F>(
+        &self,
+        key: &Key<P>,
+        vid: VaultId,
+        rid: RecordId,
+        f: F,
+    ) -> Result<(), VaultError<P::Error, E>>
+    where
+        F: FnOnce(Buffer<u8>) -> Result<(), E>,
+        E: Debug,
+    {
+        let vault = self.vaults.get(&vid).ok_or(VaultError::VaultNotFound(vid))?;
+        let guard = vault.get_guard(key, rid.0).map_err(VaultError::Record)?;
+        f(guard).map_err(VaultError::Procedure)
+    }
+
+    pub fn get_guards<E, F, const N: usize>(
+        &self,
+        ids: [(Key<P>, VaultId, RecordId); N],
+        f: F,
+    ) -> Result<(), VaultError<P::Error, E>>
+    where
+        F: FnOnce([Buffer<u8>; N]) -> Result<(), E>,
+        E: Debug,
+    {
+        let buffers: [Buffer<u8>; N] = self.get_buffers(ids)?;
+        f(buffers).map_err(VaultError::Procedure)
+    }
+
+    /// Access the decrypted [`Buffer`]s of the specified [`Record`]s and place the return value
+    /// into the target [`Record`].
+    pub fn exec_procedure<E, F, const N: usize>(
+        &mut self,
+        sources: [(Key<P>, VaultId, RecordId); N],
+        target_key: &Key<P>,
+        target_vid: VaultId,
+        target_rid: RecordId,
+        hint: RecordHint,
+        f: F,
+    ) -> Result<(), VaultError<P::Error, E>>
+    where
+        F: FnOnce([Buffer<u8>; N]) -> Result<Vec<u8>, E>,
+        E: Debug,
+    {
+        let buffers: [Buffer<u8>; N] = self.get_buffers(sources)?;
+
+        let data: Vec<u8> = f(buffers).map_err(VaultError::Procedure)?;
+
+        self.write(target_key, target_vid, target_rid, &data, hint)
+            .map_err(VaultError::Record)
     }
 
     /// Add a revocation transaction to the [`Record`]
-    pub fn revoke_record(&mut self, key: &Key<P>, vid: VaultId, rid: RecordId) -> crate::Result<()> {
+    pub fn revoke_record(&mut self, key: &Key<P>, vid: VaultId, rid: RecordId) -> Result<(), RecordError<P::Error>> {
         if let Some(vault) = self.vaults.get_mut(&vid) {
             vault.revoke(key, rid.0)?;
         }
-
         Ok(())
     }
 
     /// Garbage collect a [`Vault`]. Deletes any records that contain revocation transactions.
-    pub fn garbage_collect_vault(&mut self, key: &Key<P>, vid: VaultId) -> crate::Result<()> {
+    pub fn garbage_collect_vault(&mut self, key: &Key<P>, vid: VaultId) {
         if let Some(vault) = self.vaults.get_mut(&vid) {
             if &vault.key == key {
                 vault.garbage_collect();
             }
         }
-
-        Ok(())
     }
 
     /// Clears the entire [`Vault`] from memory.
-    pub fn clear(&mut self) -> crate::Result<()> {
+    pub fn clear(&mut self) {
         self.vaults.clear();
+    }
 
-        Ok(())
+    /// List the ids of all vaults.
+    pub fn list_vaults(&self) -> Vec<VaultId> {
+        self.vaults.keys().cloned().collect()
+    }
+
+    /// List the ids of all records in the vault.
+    pub fn list_records(&self, vid: &VaultId) -> Vec<RecordId> {
+        self.vaults
+            .get(vid)
+            .map(|v| v.entries.keys().map(|&c| c.into()).collect())
+            .unwrap_or_default()
+    }
+
+    /// List [`RecordId`] and [`BlobId`] of all entries in the vault.
+    pub fn list_records_with_blob_id(
+        &self,
+        key: &Key<P>,
+        vid: VaultId,
+    ) -> Result<Vec<(RecordId, BlobId)>, VaultError<P::Error>> {
+        self.vaults
+            .get(&vid)
+            .ok_or(VaultError::VaultNotFound(vid))
+            .and_then(|v| v.list_entries(key).map_err(|e| e.into()))
+    }
+
+    /// Clone the all records from all vaults without removing them.
+    pub fn export_all(&self) -> HashMap<VaultId, Vec<(RecordId, Record)>> {
+        self.vaults
+            .iter()
+            .map(|(vid, vault)| {
+                let entries = vault.entries.iter().map(|(&id, r)| (id.into(), r.clone())).collect();
+                (*vid, entries)
+            })
+            .collect()
+    }
+
+    /// Clone the specified records from the vault without removing them.
+    ///
+    /// **Note:** before importing these records to a new vault with [`DbView::import_records`], [`Record::update_meta`]
+    /// has to be called on each [`Record`] to re-encrypt it with the target vault's encryption key.
+    pub fn export_records<I>(&self, vid: VaultId, records: I) -> Result<Vec<(RecordId, Record)>, VaultError<P::Error>>
+    where
+        I: IntoIterator<Item = RecordId>,
+    {
+        let vault = self.vaults.get(&vid).ok_or(VaultError::VaultNotFound(vid))?;
+        let list = records
+            .into_iter()
+            .filter_map(|rid| vault.export_record(&rid).map(|r| (rid, r)))
+            .collect();
+        Ok(list)
+    }
+
+    /// Import records to the [`Vault`]. In case of duplicated records, the existing record is dropped in favor of the
+    /// new one. Re-encrypt the records with the new key.
+    pub fn import_records(
+        &mut self,
+        old_key: &Key<P>,
+        new_key: &Key<P>,
+        vid: VaultId,
+        mut records: Vec<(RecordId, Record)>,
+    ) -> Result<(), RecordError<P::Error>> {
+        if !self.vaults.contains_key(&vid) {
+            self.init_vault(new_key, vid);
+        }
+        for (rid, record) in &mut records {
+            record
+                .update_meta(old_key, (*rid).into(), new_key, (*rid).into())
+                .unwrap();
+        }
+        let vault = self.vaults.get_mut(&vid).expect("Vault was initiated.");
+        vault.extend(new_key, records.into_iter().map(|(rid, r)| (rid.0, r)))
     }
 }
 
 impl<P: BoxProvider> Vault<P> {
     /// Initialize a new [`Vault`]
-    pub fn init_vault(key: &Key<P>) -> crate::Result<Vault<P>> {
+    pub fn init_vault(key: &Key<P>) -> Vault<P> {
         let entries = HashMap::new();
 
-        Ok(Self {
+        Self {
             entries,
             key: key.clone(),
-        })
+        }
     }
 
     /// Adds a new [`Record`] to the [`Vault`] if the [`Record`] doesn't already exist. Otherwise, updates the data in
@@ -192,18 +321,35 @@ impl<P: BoxProvider> Vault<P> {
         id: ChainId,
         data: &[u8],
         record_hint: RecordHint,
-    ) -> crate::Result<()> {
-        let blob_id = BlobId::random::<P>()?;
-
-        if key == &self.key {
-            self.entries
-                .entry(id)
-                .and_modify(|entry| {
-                    entry.update(key, id, data).expect("Unable to update entry");
-                })
-                .or_insert(Record::new(key, id, blob_id, data, record_hint)?);
+    ) -> Result<(), RecordError<P::Error>> {
+        self.check_key(key)?;
+        let blob_id = BlobId::random::<P>().map_err(RecordError::Provider)?;
+        if let Some(entry) = self.entries.get_mut(&id) {
+            // TODO: double-check that using a new blob-id does not break the old snapshot format.
+            entry.update_data(key, id, data, blob_id)?
+        } else {
+            let entry = Record::new(key, id, blob_id, data, record_hint).map_err(RecordError::Provider)?;
+            self.entries.insert(id, entry);
         }
+
         Ok(())
+    }
+
+    /// Extend the stored entries with entries from another vault with the same key.
+    /// In case of duplicated records, the existing record is dropped in favor of the new one.
+    pub fn extend<I>(&mut self, key: &Key<P>, entries: I) -> Result<(), RecordError<P::Error>>
+    where
+        I: IntoIterator<Item = (ChainId, Record)>,
+    {
+        self.check_key(key)?;
+        self.entries.extend(entries.into_iter());
+        Ok(())
+    }
+
+    /// Export record stored in the current vault. This clones the encrypted record without
+    /// removing it.
+    pub fn export_record(&self, rid: &RecordId) -> Option<Record> {
+        self.entries.get(&rid.0).cloned()
     }
 
     /// List the [`RecordHint`] values and [`RecordId`] values of the specified [`Vault`].
@@ -215,44 +361,42 @@ impl<P: BoxProvider> Vault<P> {
                 .entries
                 .values()
                 .into_iter()
-                .filter_map(|entry| entry.get_hint_and_id(key))
+                .filter_map(|entry| entry.get_hint_and_id(key).ok())
                 .collect();
         }
 
         buf
     }
 
-    /// Check if the [`Vault`] contains a [`Record`]
-    fn contains_record(&self, key: &Key<P>, rid: RecordId) -> bool {
-        if key == &self.key {
-            self.entries.values().into_iter().any(|entry| entry.check_id(rid))
-        } else {
-            false
+    /// List the [`RecordId`]s of the entries stored in this [`Vault`].
+    fn list_entries(&self, key: &Key<P>) -> Result<Vec<(RecordId, BlobId)>, RecordError<P::Error>> {
+        let mut buf = Vec::new();
+        for (&id, record) in self.entries.iter() {
+            let blob_id = record.get_blob_id(key, id)?;
+            buf.push((id.into(), blob_id))
         }
+        Ok(buf)
+    }
+
+    /// Check if the [`Vault`] contains a [`Record`].
+    fn contains_record(&self, rid: RecordId) -> bool {
+        self.entries.values().into_iter().any(|entry| entry.check_id(rid))
     }
 
     /// Revokes an [`Record`] by its [`ChainId`].  Does nothing if the [`Record`] doesn't exist.
-    pub fn revoke(&mut self, key: &Key<P>, id: ChainId) -> crate::Result<()> {
-        if key == &self.key {
-            if let Some(entry) = self.entries.get_mut(&id) {
-                entry.revoke(key, id)?;
-            }
+    pub fn revoke(&mut self, key: &Key<P>, id: ChainId) -> Result<(), RecordError<P::Error>> {
+        self.check_key(key)?;
+        if let Some(entry) = self.entries.get_mut(&id) {
+            entry.revoke(key, id)?;
         }
-
         Ok(())
     }
 
-    /// Gets the decrypted [`GuardedVec`] from the [`Record`]
-    pub fn get_guard(&self, key: &Key<P>, id: ChainId) -> crate::Result<GuardedVec<u8>> {
-        if key == &self.key {
-            if let Some(entry) = self.entries.get(&id) {
-                entry.get_blob(key, id)
-            } else {
-                Ok(GuardedVec::random(0))
-            }
-        } else {
-            Err(crate::Error::DatabaseError("Invalid key.".into()))
-        }
+    /// Gets the decrypted [`Buffer`] from the [`Record`]
+    pub fn get_guard(&self, key: &Key<P>, id: ChainId) -> Result<Buffer<u8>, RecordError<P::Error>> {
+        self.check_key(key)?;
+        let entry = self.entries.get(&id).ok_or(RecordError::RecordNotFound(id))?;
+        entry.get_blob(key, id)
     }
 
     /// Sorts through all of the vault entries and garbage collects any revoked entries.
@@ -270,6 +414,23 @@ impl<P: BoxProvider> Vault<P> {
             self.entries.remove(c);
         });
     }
+
+    /// Gets the [`BlobId`] of the record with the given [`ChainId`].
+    pub fn get_blob_id(&self, key: &Key<P>, id: ChainId) -> Result<BlobId, RecordError<P::Error>> {
+        self.check_key(key)?;
+        self.entries
+            .get(&id)
+            .ok_or(RecordError::RecordNotFound(id))
+            .and_then(|r| r.get_blob_id(key, id))
+    }
+
+    fn check_key(&self, key: &Key<P>) -> Result<(), RecordError<P::Error>> {
+        if key == &self.key {
+            Ok(())
+        } else {
+            Err(RecordError::InvalidKey)
+        }
+    }
 }
 
 impl Record {
@@ -280,7 +441,7 @@ impl Record {
         blob: BlobId,
         data: &[u8],
         hint: RecordHint,
-    ) -> crate::Result<Record> {
+    ) -> Result<Record, P::Error> {
         let len = data.len() as u64;
         let dtx = DataTransaction::new(id, len, blob, hint);
 
@@ -295,22 +456,29 @@ impl Record {
         })
     }
 
-    /// gets the [`RecordHint`] and [`RecordId`] of the [`Record`].
-    fn get_hint_and_id<P: BoxProvider>(&self, key: &Key<P>) -> Option<(RecordId, RecordHint)> {
+    fn get_transaction<P: BoxProvider>(&self, key: &Key<P>) -> Result<Transaction, RecordError<P::Error>> {
+        // check if a revocation transaction exists.
         if self.revoke.is_none() {
-            let tx = self.data.decrypt(key, self.id).expect("Unable to decrypt transaction");
-
-            let tx = tx
-                .typed::<DataTransaction>()
-                .expect("Failed to convert to data transaction");
-
-            let hint = tx.record_hint;
-            let id = RecordId(self.id);
-
-            Some((id, hint))
+            // decrypt data transaction.
+            self.data.decrypt(key, self.id).map_err(|err| match err {
+                DecryptError::Invalid => {
+                    RecordError::CorruptedContent("Could not convert bytes into transaction structure".into())
+                }
+                DecryptError::Provider(e) => RecordError::Provider(e),
+            })
         } else {
-            None
+            Err(RecordError::RecordNotFound(self.id))
         }
+    }
+
+    /// Gets the [`RecordHint`] and [`RecordId`] of the [`Record`].
+    fn get_hint_and_id<P: BoxProvider>(&self, key: &Key<P>) -> Result<(RecordId, RecordHint), RecordError<P::Error>> {
+        let tx = self.get_transaction(key)?;
+        let tx = tx.typed::<DataTransaction>().ok_or_else(|| {
+            RecordError::CorruptedContent("Could not type decrypted transaction as data-transaction".into())
+        })?;
+        let hint = tx.record_hint;
+        Ok((self.id.into(), hint))
     }
 
     /// Check to see if a [`RecordId`] pairs with the [`Record`]. Comes back as false if there is a revocation
@@ -324,71 +492,132 @@ impl Record {
     }
 
     /// Get the blob from this [`Record`].
-    fn get_blob<P: BoxProvider>(&self, key: &Key<P>, id: ChainId) -> crate::Result<GuardedVec<u8>> {
-        // check if id id and tx id match.
-        if self.id == id {
-            // check if there is a revocation transaction.
-            if self.revoke.is_none() {
-                let tx = self.data.decrypt(key, self.id).expect("Unable to decrypt tx");
-                let tx = tx
-                    .typed::<DataTransaction>()
-                    .expect("Failed to cast as data transaction");
-
-                let guarded = GuardedVec::new(tx.len.u64() as usize, |i| {
-                    let blob = SealedBlob::from(self.blob.as_ref())
-                        .decrypt(key, tx.blob)
-                        .expect("Unable to decrypt blob");
-
-                    i.copy_from_slice(blob.as_ref());
-                });
-
-                Ok(guarded)
-            } else {
-                Ok(GuardedVec::zero(0))
-            }
-        } else {
-            Err(crate::Error::DatabaseError(
-                "Invalid id for record. Ids must match a valid record.".to_string(),
-            ))
+    fn get_blob<P: BoxProvider>(&self, key: &Key<P>, id: ChainId) -> Result<Buffer<u8>, RecordError<P::Error>> {
+        // check if ids match
+        if self.id != id {
+            return Err(RecordError::RecordNotFound(id));
         }
+
+        let tx = self.get_transaction(key)?;
+        let tx = tx.typed::<DataTransaction>().ok_or_else(|| {
+            RecordError::CorruptedContent("Could not type decrypted transaction as data-transaction".into())
+        })?;
+
+        let blob = SealedBlob::from(self.blob.as_ref())
+            .decrypt(key, tx.blob)
+            .expect("Unable to decrypt blob");
+
+        let guarded = Buffer::alloc(&blob, tx.len.u64() as usize);
+
+        // let guarded =
+        //     GuardedVec::new(tx.len.u64() as usize, |i| {
+        //     let blob = SealedBlob::from(self.blob.as_ref())
+        //         .decrypt(key, tx.blob)
+        //         .expect("Unable to decrypt blob");
+
+        //     i.copy_from_slice(blob.as_ref());
+        // });
+
+        Ok(guarded)
+    }
+
+    /// Get the [`BlobId`] of a record. The [`BlobId`] changes each time the record is updated.
+    fn get_blob_id<P: BoxProvider>(&self, key: &Key<P>, id: ChainId) -> Result<BlobId, RecordError<P::Error>> {
+        // check if ids match
+        if self.id != id {
+            return Err(RecordError::RecordNotFound(id));
+        }
+        let tx = self.get_transaction(key)?;
+        let tx = tx.typed::<DataTransaction>().ok_or_else(|| {
+            RecordError::CorruptedContent("Could not type decrypted transaction as data-transaction".into())
+        })?;
+        Ok(tx.blob)
     }
 
     /// Update the data in an existing [`Record`].
-    fn update<P: BoxProvider>(&mut self, key: &Key<P>, id: ChainId, new_data: &[u8]) -> crate::Result<()> {
+    fn update_data<P: BoxProvider>(
+        &mut self,
+        key: &Key<P>,
+        id: ChainId,
+        new_data: &[u8],
+        new_blob: BlobId,
+    ) -> Result<(), RecordError<P::Error>> {
         // check if ids match
-        if self.id == id {
-            // check if a revocation transaction exists.
-            if self.revoke.is_none() {
-                // decrypt data transaction.
-                let tx = self.data.decrypt(key, self.id)?;
-                let tx = tx
-                    .typed::<DataTransaction>()
-                    .expect("Unable to cast to data transaction");
-
-                // create a new sealed blob with the new_data.
-                let blob: SealedBlob = new_data.encrypt(key, tx.blob)?;
-                // create a new sealed transaction with the new_data length.
-                let dtx = DataTransaction::new(tx.id, new_data.len() as u64, tx.blob, tx.record_hint);
-                let data = dtx.encrypt(key, tx.id)?;
-
-                self.blob = blob;
-                self.data = data;
-            }
+        if self.id != id {
+            return Err(RecordError::RecordNotFound(id));
         }
+
+        let tx = self.get_transaction(key)?;
+        let tx = tx.typed::<DataTransaction>().ok_or_else(|| {
+            RecordError::CorruptedContent("Could not type decrypted transaction as data-transaction".into())
+        })?;
+
+        // create a new sealed blob with the new_data.
+        let blob: SealedBlob = new_data.encrypt(key, new_blob).map_err(RecordError::Provider)?;
+
+        // create a new sealed transaction with the new_data length.
+        let dtx = DataTransaction::new(tx.id, new_data.len() as u64, new_blob, tx.record_hint);
+        let data = dtx.encrypt(key, tx.id).map_err(RecordError::Provider)?;
+
+        self.blob = blob;
+        self.data = data;
+
+        Ok(())
+    }
+
+    /// Update the key and id of an existing [`Record`].
+    pub fn update_meta<P: BoxProvider>(
+        &mut self,
+        old_key: &Key<P>,
+        old_id: ChainId,
+        new_key: &Key<P>,
+        new_id: ChainId,
+    ) -> Result<(), RecordError<P::Error>> {
+        // check if ids match
+        if self.id != old_id {
+            return Err(RecordError::RecordNotFound(old_id));
+        }
+
+        let tx = self.get_transaction(old_key)?;
+        let typed_tx = tx.typed::<DataTransaction>().ok_or_else(|| {
+            RecordError::CorruptedContent("Could not type decrypted transaction as data-transaction".into())
+        })?;
+
+        // Re-encrypt the blob with the new key.
+        let updated_blob = SealedBlob::from(self.blob.as_ref())
+            .decrypt(old_key, typed_tx.blob)
+            .map_err(|e| match e {
+                DecryptError::Provider(e) => RecordError::Provider(e),
+                DecryptError::Invalid => unreachable!("Vec<u8>: TryFrom<Vec<u8>> is infallible."),
+            })?
+            .encrypt(new_key, typed_tx.blob)
+            .map_err(RecordError::Provider)?;
+
+        // Re-encrypt meta data with new key.
+        let updated_data = DataTransaction::new(new_id, typed_tx.len, typed_tx.blob, typed_tx.record_hint)
+            .encrypt(new_key, new_id)
+            .map_err(RecordError::Provider)?;
+
+        self.blob = updated_blob;
+        self.data = updated_data;
+        self.id = new_id;
 
         Ok(())
     }
 
     // add a revocation transaction to the [`Record`].
-    fn revoke<P: BoxProvider>(&mut self, key: &Key<P>, id: ChainId) -> crate::Result<()> {
+    fn revoke<P: BoxProvider>(&mut self, key: &Key<P>, id: ChainId) -> Result<(), RecordError<P::Error>> {
         // check if id and id match.
-        if self.id == id {
-            // check if revoke transaction already exists.
-            if self.revoke.is_none() {
-                let revoke = RevocationTransaction::new(self.id);
+        if self.id != id {
+            return Err(RecordError::RecordNotFound(id));
+        }
 
-                self.revoke = Some(revoke.encrypt(key, self.id)?);
-            }
+        // check if revoke transaction already exists.
+        if self.revoke.is_none() {
+            let revoke = RevocationTransaction::new(self.id)
+                .encrypt(key, self.id)
+                .map_err(RecordError::Provider)?;
+            self.revoke = Some(revoke);
         }
 
         Ok(())

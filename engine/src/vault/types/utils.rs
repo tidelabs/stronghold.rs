@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::vault::{base64::Base64Encodable, crypto_box::BoxProvider};
+
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
-    convert::{TryFrom, TryInto},
     fmt::{self, Debug, Display, Formatter},
     hash::Hash,
     ops::{Add, AddAssign},
 };
-
-use serde::{Deserialize, Serialize};
+use thiserror::Error as DeriveError;
 
 /// a record hint.  Used as a hint to what this data is used for.
 #[repr(transparent)]
@@ -42,7 +42,7 @@ pub struct ChainId([u8; 24]);
 #[derive(Copy, Clone, Hash, Default, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Id([u8; 24]);
 
-/// A blob identifier used to refer to a [`SealedBlob`]
+/// A blob identifier used to refer to a `SealedBlob`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BlobId([u8; 24]);
@@ -52,18 +52,25 @@ pub struct BlobId([u8; 24]);
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct Val([u8; 8]);
 
+#[derive(DeriveError, Debug)]
+#[error("Invalid Length: Expected: `{expected}`, Found: `{found}`")]
+pub struct InvalidLength {
+    expected: usize,
+    found: usize,
+}
+
 impl RecordHint {
     /// create a new random Id for hint
-    pub fn new(hint: impl AsRef<[u8]>) -> crate::Result<Self> {
+    pub fn new(hint: impl AsRef<[u8]>) -> Option<Self> {
         let hint = match hint.as_ref() {
             hint if hint.len() <= 24 => hint,
-            _ => return Err(crate::Error::InterfaceError),
+            _ => return None,
         };
 
         // copy hint
         let mut buf = [0; 24];
         buf[..hint.len()].copy_from_slice(hint);
-        Ok(Self(buf))
+        Some(Self(buf))
     }
 }
 
@@ -76,7 +83,7 @@ impl Val {
 
 impl ChainId {
     /// Generates a random [`ChainId`]
-    pub fn random<P: BoxProvider>() -> crate::Result<Self> {
+    pub fn random<P: BoxProvider>() -> Result<Self, P::Error> {
         let mut buf = [0; 24];
         P::random_buf(&mut buf)?;
 
@@ -84,14 +91,14 @@ impl ChainId {
     }
 
     /// Loads a [`ChainId`] from a buffer of bytes.
-    pub fn load(data: &[u8]) -> crate::Result<Self> {
+    pub fn load(data: &[u8]) -> Result<Self, InvalidLength> {
         data.try_into()
     }
 }
 
 impl BlobId {
     /// Generates a random [`BlobId`]
-    pub fn random<P: BoxProvider>() -> crate::Result<Self> {
+    pub fn random<P: BoxProvider>() -> Result<Self, P::Error> {
         let mut buf = [0; 24];
         P::random_buf(&mut buf)?;
         Ok(Self(buf))
@@ -100,19 +107,19 @@ impl BlobId {
 
 impl RecordId {
     /// Generates a random [`RecordId`]
-    pub fn random<P: BoxProvider>() -> crate::Result<Self> {
-        Ok(RecordId(ChainId::random::<P>()?))
+    pub fn random<P: BoxProvider>() -> Result<Self, P::Error> {
+        ChainId::random::<P>().map(RecordId)
     }
 
     /// load [`RecordId`] from a buffer of bytes.
-    pub fn load(data: &[u8]) -> crate::Result<Self> {
+    pub fn load(data: &[u8]) -> Result<Self, InvalidLength> {
         Ok(RecordId(ChainId::load(data)?))
     }
 }
 
 impl Id {
     /// Generates a random [`Id`]
-    pub fn random<P: BoxProvider>() -> crate::Result<Self> {
+    pub fn random<P: BoxProvider>() -> Result<Self, P::Error> {
         let mut buf = [0; 24];
         P::random_buf(&mut buf)?;
 
@@ -120,31 +127,31 @@ impl Id {
     }
 
     /// load [`Id`] from a buffer of bytes.
-    pub fn load(data: &[u8]) -> crate::Result<Self> {
+    pub fn load(data: &[u8]) -> Result<Self, InvalidLength> {
         data.try_into()
     }
 }
 
 impl VaultId {
     /// Generates a random [`VaultId`]
-    pub fn random<P: BoxProvider>() -> crate::Result<Self> {
-        Ok(VaultId(Id::random::<P>()?))
+    pub fn random<P: BoxProvider>() -> Result<Self, P::Error> {
+        Id::random::<P>().map(VaultId)
     }
 
     /// load [`VaultId`] from a buffer of bytes.
-    pub fn load(data: &[u8]) -> crate::Result<Self> {
+    pub fn load(data: &[u8]) -> Result<Self, InvalidLength> {
         Ok(VaultId(Id::load(data)?))
     }
 }
 
 impl ClientId {
     /// Generates a random [`ClientId`]
-    pub fn random<P: BoxProvider>() -> crate::Result<Self> {
-        Ok(ClientId(Id::random::<P>()?))
+    pub fn random<P: BoxProvider>() -> Result<Self, P::Error> {
+        Id::random::<P>().map(ClientId)
     }
 
     /// load [`ClientId`] from a buffer of bytes.
-    pub fn load(data: &[u8]) -> crate::Result<Self> {
+    pub fn load(data: &[u8]) -> Result<Self, InvalidLength> {
         Ok(ClientId(Id::load(data)?))
     }
 }
@@ -215,12 +222,21 @@ impl Debug for ChainId {
     }
 }
 
+impl From<RecordId> for ChainId {
+    fn from(id: RecordId) -> Self {
+        id.0
+    }
+}
+
 impl TryFrom<&[u8]> for ChainId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: &[u8]) -> Result<Self, Self::Error> {
         if bs.len() != 24 {
-            return Err(crate::Error::InterfaceError);
+            return Err(InvalidLength {
+                expected: 24,
+                found: bs.len(),
+            });
         }
 
         let mut tmp = [0; 24];
@@ -230,7 +246,7 @@ impl TryFrom<&[u8]> for ChainId {
 }
 
 impl TryFrom<Vec<u8>> for ChainId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: Vec<u8>) -> Result<Self, Self::Error> {
         Self::try_from(bs.as_slice())
@@ -262,11 +278,14 @@ impl Debug for BlobId {
 }
 
 impl TryFrom<&[u8]> for BlobId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: &[u8]) -> Result<Self, Self::Error> {
         if bs.len() != 24 {
-            return Err(crate::Error::InterfaceError);
+            return Err(InvalidLength {
+                expected: 24,
+                found: bs.len(),
+            });
         }
 
         let mut tmp = [0; 24];
@@ -287,8 +306,14 @@ impl Display for RecordId {
     }
 }
 
+impl From<ChainId> for RecordId {
+    fn from(id: ChainId) -> Self {
+        RecordId(id)
+    }
+}
+
 impl TryFrom<Vec<u8>> for RecordId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: Vec<u8>) -> Result<Self, Self::Error> {
         Ok(RecordId(bs.try_into()?))
@@ -296,7 +321,7 @@ impl TryFrom<Vec<u8>> for RecordId {
 }
 
 impl TryFrom<&[u8]> for RecordId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: &[u8]) -> Result<Self, Self::Error> {
         Ok(RecordId(bs.try_into()?))
@@ -316,11 +341,14 @@ impl Debug for Id {
 }
 
 impl TryFrom<&[u8]> for Id {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: &[u8]) -> Result<Self, Self::Error> {
         if bs.len() != 24 {
-            return Err(crate::Error::OtherError("Id error".into()));
+            return Err(InvalidLength {
+                expected: 24,
+                found: bs.len(),
+            });
         }
 
         let mut tmp = [0; 24];
@@ -330,7 +358,7 @@ impl TryFrom<&[u8]> for Id {
 }
 
 impl TryFrom<Vec<u8>> for Id {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: Vec<u8>) -> Result<Self, Self::Error> {
         Self::try_from(bs.as_slice())
@@ -338,7 +366,7 @@ impl TryFrom<Vec<u8>> for Id {
 }
 
 impl TryFrom<Vec<u8>> for ClientId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: Vec<u8>) -> Result<Self, Self::Error> {
         Ok(ClientId(bs.try_into()?))
@@ -346,7 +374,7 @@ impl TryFrom<Vec<u8>> for ClientId {
 }
 
 impl TryFrom<&[u8]> for ClientId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: &[u8]) -> Result<Self, Self::Error> {
         Ok(ClientId(bs.try_into()?))
@@ -360,7 +388,7 @@ impl Debug for ClientId {
 }
 
 impl TryFrom<Vec<u8>> for VaultId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: Vec<u8>) -> Result<Self, Self::Error> {
         Ok(VaultId(bs.try_into()?))
@@ -368,7 +396,7 @@ impl TryFrom<Vec<u8>> for VaultId {
 }
 
 impl TryFrom<&[u8]> for VaultId {
-    type Error = crate::Error;
+    type Error = InvalidLength;
 
     fn try_from(bs: &[u8]) -> Result<Self, Self::Error> {
         Ok(VaultId(bs.try_into()?))
@@ -394,12 +422,6 @@ impl AsRef<[u8]> for VaultId {
 }
 
 impl Into<Vec<u8>> for ClientId {
-    fn into(self) -> Vec<u8> {
-        self.0 .0.to_vec()
-    }
-}
-
-impl Into<Vec<u8>> for RecordId {
     fn into(self) -> Vec<u8> {
         self.0 .0.to_vec()
     }
