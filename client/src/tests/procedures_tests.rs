@@ -284,7 +284,7 @@ async fn usecase_secp256k1_from_bip39() {
     }
 
     let secret = fresh::location();
-    let (_path, chain) = fresh::hd_path();
+    let (_path, chain) = fresh::hd_path_schain();
 
     match sh
         .runtime_exec(Procedure::Secp256k1DeriveFromBIP39Seed {

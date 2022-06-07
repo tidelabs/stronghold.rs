@@ -31,9 +31,10 @@ use crypto::{
     signatures::{
         ed25519,
         secp256k1::{
-            PublicKey as Secp256k1PublicKeyValue, RecoveryId as Secp256k1RecoveryId, SecretKey as Secp256k1SecretKey,
-            Seed as Secp256k1Seed, Signature as Secp256k1Signature, PUBLIC_KEY_LENGTH as SECP256K1_PUBLIC_KEY_LENGTH,
-            SECRET_KEY_LENGTH as SECP256K1_SECRET_KEY_LENGTH, SIGNATURE_LENGTH as SECP256K1_SIGNATURE_LENGTH,
+            Chain as SChain, PublicKey as Secp256k1PublicKeyValue, RecoveryId as Secp256k1RecoveryId,
+            SecretKey as Secp256k1SecretKey, Seed as Secp256k1Seed, Signature as Secp256k1Signature,
+            PUBLIC_KEY_LENGTH as SECP256K1_PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH as SECP256K1_SECRET_KEY_LENGTH,
+            SIGNATURE_LENGTH as SECP256K1_SIGNATURE_LENGTH,
         },
         sr25519::{
             DeriveJunction as Sr25519DeriveJunction, KeyPair as Sr25519KeyPair, PublicKey as Sr25519PublicKeyValue,
@@ -321,7 +322,7 @@ pub mod procedures {
         Secp256k1Generate { output: Location, hint: RecordHint },
         /// Derive a Secp256k1 secret key from a BIP39 seed, store it in output location.
         Secp256k1DeriveFromBIP39Seed {
-            chain: Chain,
+            chain: SChain,
             input: Location,
             output: Location,
             hint: RecordHint,
@@ -726,7 +727,7 @@ pub mod procedures {
 
     #[derive(Clone, GuardDebug)]
     pub struct Secp256k1DeriveFromBIP39Seed {
-        pub chain: Chain,
+        pub chain: SChain,
         pub seed_vault_id: VaultId,
         pub seed_record_id: RecordId,
         pub output_vault_id: VaultId,
@@ -1718,6 +1719,7 @@ impl_handler!(procedures::Secp256k1DeriveFromBIP39Seed, Result<crate::ProcResult
         msg.output_record_id,
         msg.hint,
         |gdata| {
+
             let dk = Secp256k1Seed::from_bytes(&gdata.borrow())
                 .derive(&msg.chain)
                 .map_err(|e| anyhow::anyhow!(e))

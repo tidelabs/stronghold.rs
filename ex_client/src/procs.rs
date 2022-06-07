@@ -79,7 +79,7 @@ pub fn sr25519_sign_inner(
         Ok(())
     })?;
 
-    Signature::from_slice(&res).map_err(|_| crate::Error::SignatureError)
+    Ok(Signature::from_raw(res))
 }
 
 pub fn public_key_inner(mut bucket: SecureBucket, mut keystore: KeyStore, loc: Location) -> crate::Result<[u8; 32]> {
