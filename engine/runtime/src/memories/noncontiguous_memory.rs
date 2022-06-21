@@ -124,11 +124,11 @@ impl NonContiguousMemory {
 
         // Refresh shard1
         let buf_of_old_shard1 = self.get_buffer_from_shard1();
-        let data_of_old_shard1 = &*buf_of_old_shard1.borrow();
+        let data_of_old_shard1 = &buf_of_old_shard1.borrow();
         let new_data1 = xor(data_of_old_shard1, &random, NC_DATA_SIZE);
         let new_shard1 = RamShard(RamMemory::alloc(&new_data1, NC_DATA_SIZE)?);
 
-        let hash_of_old_shard1 = blake2b::Blake2b256::digest(data_of_old_shard1);
+        let hash_of_old_shard1 = blake2b::Blake2b256::digest(&*buf_of_old_shard1.borrow());
         let hash_of_new_shard1 = blake2b::Blake2b256::digest(&new_data1);
 
         let new_shard2 = match &self.shard2 {

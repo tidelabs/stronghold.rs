@@ -38,8 +38,8 @@ serde = { version = "1.0", features = [ "derive" ] }
 
   
 [dependencies.iota-crypto]
-git = "https://github.com/tidelabs/crypto.rs"
-branch = "dev"
+git = "https://tributary.semantic-network.tech/semnet/Libs/crypto.rs"
+branch = "feat/update-v8"
 features = [ "random", "chacha", "hmac", "sha", "x25519", "blake2b" ]
 
 [dev-dependencies]

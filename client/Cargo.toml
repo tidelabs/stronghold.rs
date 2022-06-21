@@ -31,11 +31,10 @@ stronghold_utils = { package = "stronghold-utils", path = "../utils/", version =
 stronghold_derive = { package = "stronghold-derive", path = "../derive", version = "0.3.0" }
 
 [dependencies.iota-crypto]
-git = "https://github.com/tidelabs/crypto.rs"
-branch = "dev"
+git = "https://tributary.semantic-network.tech/semnet/Libs/crypto.rs"
+branch = "feat/update-v8"
 features = [
-  "aes",
-
+  "aes-gcm",
   "aes-kw",
   "random",
   "ed25519",
