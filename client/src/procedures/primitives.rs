@@ -20,10 +20,11 @@ use crypto::{
     keys::{
         bip39,
         pbkdf::{PBKDF2_HMAC_SHA256, PBKDF2_HMAC_SHA384, PBKDF2_HMAC_SHA512},
-        slip10, x25519,
+        slip10::{self, interface::PrivateKey},
+        x25519,
     },
     macs::hmac::{HMAC_SHA256, HMAC_SHA384, HMAC_SHA512},
-    signatures::ed25519,
+    signatures::{ed25519, secp256k1, sr25519},
     utils::rand::fill,
 };
 
@@ -57,6 +58,8 @@ pub enum StrongholdProcedure {
     Pbkdf2Hmac(Pbkdf2Hmac),
     AeadEncrypt(AeadEncrypt),
     AeadDecrypt(AeadDecrypt),
+    Sr25519Sign(Sr25519Sign),
+    Secp256k1Sign(Secp256k1Sign),
 }
 
 impl Procedure for StrongholdProcedure {
@@ -85,6 +88,8 @@ impl Procedure for StrongholdProcedure {
             Pbkdf2Hmac(proc) => proc.execute(runner).map(|o| o.into()),
             AeadEncrypt(proc) => proc.execute(runner).map(|o| o.into()),
             AeadDecrypt(proc) => proc.execute(runner).map(|o| o.into()),
+            Sr25519Sign(proc) => proc.execute(runner).map(|o| o.into()),
+            Secp256k1Sign(proc) => proc.execute(runner).map(|o| o.into()),
         }
     }
 }
@@ -104,6 +109,8 @@ impl StrongholdProcedure {
             | StrongholdProcedure::PublicKey(PublicKey { private_key: input, .. })
             | StrongholdProcedure::Ed25519Sign(Ed25519Sign { private_key: input, .. })
             | StrongholdProcedure::X25519DiffieHellman(X25519DiffieHellman { private_key: input, .. })
+            | StrongholdProcedure::Sr25519Sign(Sr25519Sign { private_key: input, .. })
+            | StrongholdProcedure::Secp256k1Sign(Secp256k1Sign { private_key: input, .. })
             | StrongholdProcedure::Hkdf(Hkdf { ikm: input, .. })
             | StrongholdProcedure::ConcatKdf(ConcatKdf {
                 shared_secret: input, ..
@@ -187,7 +194,7 @@ macro_rules! generic_procedures {
 
 generic_procedures! {
     // Stronghold procedures that implement the `UseSecret` trait.
-    UseSecret<1> => { PublicKey, Ed25519Sign, Hmac, AeadEncrypt, AeadDecrypt },
+    UseSecret<1> => { PublicKey, Ed25519Sign, Hmac, AeadEncrypt, AeadDecrypt, Sr25519Sign, Secp256k1Sign },
     UseSecret<2> => { AesKeyWrapEncrypt },
     // Stronghold procedures that implement the `DeriveSecret` trait.
     DeriveSecret<1> => { CopyRecord, Slip10Derive, X25519DiffieHellman, Hkdf, ConcatKdf, AesKeyWrapDecrypt }
@@ -304,6 +311,8 @@ pub enum AeadCipher {
 pub enum KeyType {
     Ed25519,
     X25519,
+    Secp256k1,
+    Sr25519,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,7 +407,7 @@ impl GenerateSecret for BIP39Recover {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Slip10Generate {
     pub size_bytes: Option<usize>,
-
+    pub curve: slip10::Curve,
     pub output: Location,
 }
 
@@ -432,9 +441,8 @@ pub enum Slip10DeriveInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Slip10Derive {
     pub chain: Chain,
-
     pub input: Slip10DeriveInput,
-
+    pub curve: slip10::Curve,
     pub output: Location,
 }
 
@@ -444,11 +452,16 @@ impl DeriveSecret<1> for Slip10Derive {
     fn derive(self, guards: [Buffer<u8>; 1]) -> Result<Products<ChainCode>, FatalProcedureError> {
         let dk = match self.input {
             Slip10DeriveInput::Key(_) => {
-                slip10::Key::try_from(&*guards[0].borrow()).and_then(|parent| parent.derive(&self.chain))
+                slip10::Key::try_from(&*guards[0].borrow()).and_then(|parent| match self.curve {
+                    slip10::Curve::Ed25519 => {
+                        <slip10::Key as PrivateKey<ed25519::SecretKey>>::derive(&parent, &self.chain)
+                    }
+                    slip10::Curve::Secp256k1 => {
+                        <slip10::Key as PrivateKey<secp256k1::SecretKey>>::derive(&parent, &self.chain)
+                    }
+                })
             }
-            Slip10DeriveInput::Seed(_) => {
-                slip10::Seed::from_bytes(&guards[0].borrow()).derive(slip10::Curve::Ed25519, &self.chain)
-            }
+            Slip10DeriveInput::Seed(_) => slip10::Seed::from_bytes(&guards[0].borrow()).derive(self.curve, &self.chain),
         }?;
         Ok(Products {
             secret: dk.into(),
@@ -498,6 +511,42 @@ fn ed25519_secret_key(raw: Ref<u8>) -> Result<ed25519::SecretKey, crypto::Error>
     Ok(ed25519::SecretKey::from_bytes(bs))
 }
 
+fn sr25519_key_pair(raw: Ref<u8>) -> Result<sr25519::KeyPair, crypto::Error> {
+    let mut raw = (*raw).to_vec();
+    if raw.len() < 64 {
+        let e = crypto::Error::BufferSize {
+            has: raw.len(),
+            needs: 64,
+            name: "data buffer",
+        };
+
+        Err(e)
+    } else {
+        raw.truncate(64);
+        let mut bs = [0; 64];
+        bs.copy_from_slice(&raw);
+        Ok(sr25519::KeyPair::from_seed(&bs))
+    }
+}
+
+fn secp256k1_secret_key(raw: Ref<u8>) -> Result<secp256k1::SecretKey, crypto::Error> {
+    let mut raw = (*raw).to_vec();
+    if raw.len() < secp256k1::SECRET_KEY_LENGTH {
+        let e = crypto::Error::BufferSize {
+            has: raw.len(),
+            needs: secp256k1::SECRET_KEY_LENGTH,
+            name: "data buffer",
+        };
+
+        Err(e)
+    } else {
+        raw.truncate(secp256k1::SECRET_KEY_LENGTH);
+        let mut bs = [0; secp256k1::SECRET_KEY_LENGTH];
+        bs.copy_from_slice(&raw);
+        Ok(secp256k1::SecretKey::from_bytes(&bs)?)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateKey {
     pub ty: KeyType,
@@ -511,6 +560,8 @@ impl GenerateSecret for GenerateKey {
         let secret = match self.ty {
             KeyType::Ed25519 => ed25519::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
             KeyType::X25519 => x25519::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
+            KeyType::Secp256k1 => secp256k1::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
+            KeyType::Sr25519 => sr25519::KeyPair::generate().map(|sk| sk.seed())?,
         };
         Ok(Products { secret, output: () })
     }
@@ -520,7 +571,7 @@ impl GenerateSecret for GenerateKey {
     }
 }
 
-/// Derive an Ed25519 public key from the corresponding private key stored at the specified
+/// Derive an public key from the corresponding private key stored at the specified
 /// location
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicKey {
@@ -530,17 +581,25 @@ pub struct PublicKey {
 }
 
 impl UseSecret<1> for PublicKey {
-    type Output = [u8; 32];
+    type Output = Vec<u8>;
 
     fn use_secret(self, guards: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
         match self.ty {
             KeyType::Ed25519 => {
                 let sk = ed25519_secret_key(guards[0].borrow())?;
-                Ok(sk.public_key().to_bytes())
+                Ok(sk.public_key().to_bytes().to_vec())
             }
             KeyType::X25519 => {
                 let sk = x25519_secret_key(guards[0].borrow())?;
-                Ok(sk.public_key().to_bytes())
+                Ok(sk.public_key().to_bytes().to_vec())
+            }
+            KeyType::Sr25519 => {
+                let sk = sr25519_key_pair(guards[0].borrow())?;
+                Ok(<[u8; 32]>::from(sk.public_key()).to_vec())
+            }
+            KeyType::Secp256k1 => {
+                let sk = secp256k1_secret_key(guards[0].borrow())?;
+                Ok(sk.public_key().to_bytes().to_vec())
             }
         }
     }
@@ -820,6 +879,53 @@ impl UseSecret<1> for AeadDecrypt {
 
     fn source(&self) -> [Location; 1] {
         [self.key.clone()]
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sr25519Sign {
+    pub msg: Vec<u8>,
+    pub private_key: Location,
+}
+
+impl UseSecret<1> for Sr25519Sign {
+    type Output = [u8; sr25519::SIGNATURE_LENGTH];
+
+    fn use_secret(self, guards: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
+        let sk = sr25519_key_pair(guards[0].borrow())?;
+        let sig = sk.sign(&self.msg);
+        let mut res: [u8; sr25519::SIGNATURE_LENGTH] = [0u8; sr25519::SIGNATURE_LENGTH];
+        res.copy_from_slice(sig.inner().as_ref());
+
+        Ok(res)
+    }
+
+    fn source(&self) -> [Location; 1] {
+        [self.private_key.clone()]
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Secp256k1Sign {
+    pub msg: Box<[u8; 32]>,
+    pub private_key: Location,
+}
+
+impl UseSecret<1> for Secp256k1Sign {
+    type Output = [u8; secp256k1::SIGNATURE_LENGTH + 1];
+
+    fn use_secret(self, guards: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
+        let sk = secp256k1_secret_key(guards[0].borrow())?;
+        let (sig, recovery_id) = sk.sign(&self.msg);
+        let mut res = [0u8; secp256k1::SIGNATURE_LENGTH + 1];
+        res[..64].copy_from_slice(&sig.to_bytes());
+        res[64..].copy_from_slice(&[recovery_id.as_u8()]);
+
+        Ok(res)
+    }
+
+    fn source(&self) -> [Location; 1] {
+        [self.private_key.clone()]
     }
 }
 

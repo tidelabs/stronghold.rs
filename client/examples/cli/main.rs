@@ -306,6 +306,7 @@ async fn command_slip10_generate(size: Option<NonZeroUsize>, location: VaultLoca
         stronghold::Location::generic(vault_path.as_bytes().to_vec(), record_path.as_bytes().to_vec());
 
     let slip10_generate = Slip10Generate {
+        curve: crypto::keys::slip10::Curve::Ed25519,
         size_bytes: size.map(|nzu| nzu.get()),
         output: output_location,
     };
@@ -322,6 +323,7 @@ async fn command_slip10_derive(chain: ChainInput, input: VaultLocation, output: 
     let output_location = input.to_location();
 
     let slip10_generate = Slip10Generate {
+        curve: crypto::keys::slip10::Curve::Ed25519,
         size_bytes: None, // take default vaule
         output: output_location.clone(),
     };
@@ -330,6 +332,7 @@ async fn command_slip10_derive(chain: ChainInput, input: VaultLocation, output: 
 
     info!("Deriving SLIP10 Child Secret");
     let slip10_derive = Slip10Derive {
+        curve: crypto::keys::slip10::Curve::Ed25519,
         chain: chain.chain,
         input: Slip10DeriveInput::Seed(output_location),
         output: output.to_location(),
