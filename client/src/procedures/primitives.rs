@@ -62,7 +62,7 @@ pub enum StrongholdProcedure {
     // Final byte in return is the recovery_id.
     Secp256k1Sign(Secp256k1Sign),
     Sr25519Derive(Sr25519Derive),
-    Sr25519Generate(Sr25519Generate),
+    Sr25519Verify(Sr25519Verify),
 }
 
 impl Procedure for StrongholdProcedure {
@@ -94,7 +94,7 @@ impl Procedure for StrongholdProcedure {
             Sr25519Sign(proc) => proc.execute(runner).map(|o| o.into()),
             Secp256k1Sign(proc) => proc.execute(runner).map(|o| o.into()),
             Sr25519Derive(proc) => proc.execute(runner).map(|o| o.into()),
-            Sr25519Generate(proc) => proc.execute(runner).map(|o| o.into()),
+            Sr25519Verify(proc) => proc.execute(runner).map(|o| o.into()),
         }
     }
 }
@@ -123,7 +123,8 @@ impl StrongholdProcedure {
             | StrongholdProcedure::Hmac(Hmac { key: input, .. })
             | StrongholdProcedure::AeadEncrypt(AeadEncrypt { key: input, .. })
             | StrongholdProcedure::AeadDecrypt(AeadDecrypt { key: input, .. })
-            | StrongholdProcedure::Sr25519Derive(Sr25519Derive { input, .. }) => Some(input.clone()),
+            | StrongholdProcedure::Sr25519Derive(Sr25519Derive { input, .. })
+            | StrongholdProcedure::Sr25519Verify(Sr25519Verify { location: input, .. }) => Some(input.clone()),
             _ => None,
         }
     }
@@ -139,9 +140,7 @@ impl StrongholdProcedure {
             | StrongholdProcedure::X25519DiffieHellman(X25519DiffieHellman { shared_key: output, .. })
             | StrongholdProcedure::Hkdf(Hkdf { okm: output, .. })
             | StrongholdProcedure::ConcatKdf(ConcatKdf { output, .. })
-            | StrongholdProcedure::Pbkdf2Hmac(Pbkdf2Hmac { output, .. })
-            | StrongholdProcedure::Sr25519Derive(Sr25519Derive { output, .. })
-            | StrongholdProcedure::Sr25519Generate(Sr25519Generate { output, .. }) => Some(output.clone()),
+            | StrongholdProcedure::Pbkdf2Hmac(Pbkdf2Hmac { output, .. }) => Some(output.clone()),
             _ => None,
         }
     }
@@ -202,7 +201,7 @@ macro_rules! generic_procedures {
 
 generic_procedures! {
     // Stronghold procedures that implement the `UseSecret` trait.
-    UseSecret<1> => { PublicKey, Ed25519Sign, Hmac, AeadEncrypt, AeadDecrypt, Sr25519Sign, Secp256k1Sign},
+    UseSecret<1> => { PublicKey, Ed25519Sign, Hmac, AeadEncrypt, AeadDecrypt, Sr25519Sign, Secp256k1Sign, Sr25519Verify },
     UseSecret<2> => { AesKeyWrapEncrypt },
     // Stronghold procedures that implement the `DeriveSecret` trait.
     DeriveSecret<1> => { CopyRecord, Slip10Derive, X25519DiffieHellman, Hkdf, ConcatKdf, AesKeyWrapDecrypt, Sr25519Derive }
@@ -210,7 +209,7 @@ generic_procedures! {
 
 procedures! {
     // Stronghold procedures that implement the `GenerateSecret` trait.
-    GenerateSecret => { WriteVault, BIP39Generate, BIP39Recover, Slip10Generate, GenerateKey, Pbkdf2Hmac, Sr25519Generate },
+    GenerateSecret => { WriteVault, BIP39Generate, BIP39Recover, Slip10Generate, GenerateKey, Pbkdf2Hmac },
     // Stronghold procedures that directly implement the `Procedure` trait.
     _ => { RevokeData, GarbageCollect }
 }
@@ -381,11 +380,14 @@ impl GenerateSecret for BIP39Generate {
 }
 
 /// Use a BIP39 mnemonic sentence (optionally protected by a passphrase) to create or recover
-/// a BIP39 seed and store it in the `output` location
+/// a BIP39 seed and store it in the `output` location.  For Sr25519, will take the mnemonic
+/// and optional passphrase and attempt to recover the seed. If no mnemonic is set, it will
+/// generate a new seed from a bit of random entropy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BIP39Recover {
     pub passphrase: Option<String>,
-    pub mnemonic: String,
+    pub mnemonic: Option<String>,
+    pub ty: KeyType,
     pub output: Location,
 }
 
@@ -393,18 +395,61 @@ impl GenerateSecret for BIP39Recover {
     type Output = ();
 
     fn generate(self) -> Result<Products<Self::Output>, FatalProcedureError> {
-        let mut seed = [0u8; 64];
-        let passphrase = self.passphrase.unwrap_or_else(|| "".into());
-        bip39::mnemonic_to_seed(&self.mnemonic, &passphrase, &mut seed);
-        Ok(Products {
-            secret: seed.to_vec(),
-            output: (),
-        })
+        match self.ty {
+            KeyType::Ed25519 => bip39_recover_generic(self.passphrase, self.mnemonic),
+            KeyType::Sr25519 => bip39_recover_sr25519(self.passphrase, self.mnemonic),
+            KeyType::Secp256k1 => bip39_recover_generic(self.passphrase, self.mnemonic),
+            KeyType::X25519 => Err(FatalProcedureError::from("X25519 is not supported".to_owned())),
+        }
     }
 
     fn target(&self) -> &Location {
         &self.output
     }
+}
+
+fn bip39_recover_generic(
+    passphrase: Option<String>,
+    mnemonic: Option<String>,
+) -> Result<Products<()>, FatalProcedureError> {
+    let mut seed = [0u8; 64];
+    let passphrase = passphrase.unwrap_or_else(|| "".into());
+    let mnemonic = mnemonic.unwrap_or_else(|| "".into());
+    bip39::mnemonic_to_seed(&mnemonic, &passphrase, &mut seed);
+    Ok(Products {
+        secret: seed.to_vec(),
+        output: (),
+    })
+}
+
+fn bip39_recover_sr25519(
+    passphrase: Option<String>,
+    mnemonic: Option<String>,
+) -> Result<Products<()>, FatalProcedureError> {
+    let pair = if let Some(seed) = mnemonic {
+        if let Some(pass) = passphrase {
+            sr25519::KeyPair::from_string(&seed, Some(&pass))?
+        } else {
+            sr25519::KeyPair::from_string(&seed, None)?
+        }
+    } else {
+        let mut rng = [0u8; 32];
+        fill(&mut rng)?;
+
+        let seed = bip39::wordlist::encode(&rng, &bip39::wordlist::ENGLISH)
+            .map_err(|e| FatalProcedureError::from("Failed to derive bip39 from rng".to_owned()))?;
+
+        if let Some(pass) = passphrase {
+            sr25519::KeyPair::from_string(&seed, Some(&pass))?
+        } else {
+            sr25519::KeyPair::from_string(&seed, None)?
+        }
+    };
+
+    Ok(Products {
+        secret: pair.seed(),
+        output: (),
+    })
 }
 
 /// Generate a raw SLIP10 seed of the specified size (in bytes, defaults to 64 bytes/512 bits) and store it in
@@ -624,7 +669,6 @@ impl UseSecret<1> for PublicKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ed25519Sign {
     pub msg: Vec<u8>,
-
     pub private_key: Location,
 }
 
@@ -890,6 +934,7 @@ impl UseSecret<1> for AeadDecrypt {
     }
 }
 
+/// Signs a message with a Sr25519 key pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sr25519Sign {
     pub msg: Vec<u8>,
@@ -913,6 +958,33 @@ impl UseSecret<1> for Sr25519Sign {
     }
 }
 
+/// Verifies the signature of a message with a Sr25519 key pair.  Returns `[0]` or `[1]`
+/// where `0` is false and `1` is true.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sr25519Verify {
+    pub msg: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub location: Location,
+}
+
+impl UseSecret<1> for Sr25519Verify {
+    type Output = bool;
+
+    fn use_secret(self, guards: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
+        let sk = sr25519_key_pair(guards[0].borrow())?;
+        let sig = sr25519::Signature::from_slice(&self.signature)?;
+        let b = sk.public_key().verify(&sig, &self.msg);
+
+        Ok(b)
+    }
+
+    fn source(&self) -> [Location; 1] {
+        [self.location.clone()]
+    }
+}
+
+/// Signs a message with a Secp256k1 key.  Returns a slice of size `secp256k1::SIGNATURE_LENGTH + 1`
+/// where the final byte is the recovery id as a `u8`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Secp256k1Sign {
     pub msg: Box<[u8; 32]>,
@@ -937,9 +1009,10 @@ impl UseSecret<1> for Secp256k1Sign {
     }
 }
 
+/// Derive a Sr25519 Key from a given `KeyPair` location and a `Vec<DeriveJunction>` chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sr25519Derive {
-    pub chain: Chain,
+    pub chain: Vec<sr25519::DeriveJunction>,
     pub input: Location,
     pub output: Location,
 }
@@ -948,7 +1021,7 @@ impl DeriveSecret<1> for Sr25519Derive {
     type Output = ();
 
     fn derive(self, guards: [Buffer<u8>; 1]) -> Result<Products<Self::Output>, FatalProcedureError> {
-        let sk = sr25519::KeyPair::from_seed(guards[0].borrow().as_ref());
+        let sk = sr25519::KeyPair::from_seed(guards[0].borrow().as_ref()).derive(self.chain.into_iter(), None)?;
         let data = sk.seed().to_vec();
 
         Ok(Products {
@@ -959,48 +1032,6 @@ impl DeriveSecret<1> for Sr25519Derive {
 
     fn source(&self) -> [Location; 1] {
         [self.input.clone()]
-    }
-
-    fn target(&self) -> &Location {
-        &self.output
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sr25519Generate {
-    pub mnemonic_or_seed: Option<String>,
-    pub passphrase: Option<String>,
-    pub output: Location,
-}
-
-impl GenerateSecret for Sr25519Generate {
-    type Output = ();
-
-    fn generate(self) -> Result<Products<Self::Output>, FatalProcedureError> {
-        let pair = if let Some(seed) = self.mnemonic_or_seed {
-            if let Some(pass) = self.passphrase {
-                sr25519::KeyPair::from_string(&seed, Some(&pass))?
-            } else {
-                sr25519::KeyPair::from_string(&seed, None)?
-            }
-        } else {
-            let mut rng = [0u8; 32];
-            fill(&mut rng)?;
-
-            let seed = bip39::wordlist::encode(&rng, &bip39::wordlist::ENGLISH)
-                .map_err(|e| FatalProcedureError::from("Failed to derive bip39 from rng".to_owned()))?;
-
-            if let Some(pass) = self.passphrase {
-                sr25519::KeyPair::from_string(&seed, Some(&pass))?
-            } else {
-                sr25519::KeyPair::from_string(&seed, None)?
-            }
-        };
-
-        Ok(Products {
-            secret: pair.seed(),
-            output: (),
-        })
     }
 
     fn target(&self) -> &Location {

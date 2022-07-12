@@ -432,8 +432,9 @@ async fn command_bip39_recover(
 
     // get the public key
     let procedure_bip39_recover = stronghold::procedures::BIP39Recover {
+        ty: KeyType::Ed25519,
         passphrase,
-        mnemonic,
+        mnemonic: Some(mnemonic),
         output: output.to_location(),
     };
 

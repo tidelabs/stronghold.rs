@@ -133,6 +133,16 @@ impl From<String> for ProcedureOutput {
     }
 }
 
+impl From<bool> for ProcedureOutput {
+    fn from(b: bool) -> Self {
+        if b {
+            u8::to_be_bytes(1).into()
+        } else {
+            u8::to_be_bytes(0).into()
+        }
+    }
+}
+
 impl<const N: usize> From<[u8; N]> for ProcedureOutput {
     fn from(a: [u8; N]) -> Self {
         a.to_vec().into()
@@ -146,6 +156,24 @@ impl From<ProcedureOutput> for () {
 impl From<ProcedureOutput> for Vec<u8> {
     fn from(value: ProcedureOutput) -> Self {
         value.0
+    }
+}
+
+impl TryFrom<ProcedureOutput> for bool {
+    type Error = FatalProcedureError;
+
+    fn try_from(value: ProcedureOutput) -> Result<bool, Self::Error> {
+        if value.0.len() == 1 {
+            match value.0[0] {
+                0 => Ok(false),
+                1 => Ok(true),
+                _ => Err(FatalProcedureError::from("Invalid procedure output".to_owned())),
+            }
+        } else {
+            Err(FatalProcedureError::from(
+                "Output is too long to be a boolean".to_owned(),
+            ))
+        }
     }
 }
 

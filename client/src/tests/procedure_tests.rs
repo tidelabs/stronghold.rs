@@ -751,11 +751,12 @@ async fn usecase_recover_bip39() -> Result<(), Box<dyn std::error::Error>> {
     ];
     let output = client.execute_procedure_chained(procedures).unwrap();
 
-    let mnemonic = output[0].clone().try_into().unwrap(); // ?
+    let mnemonic: String = output[0].clone().try_into().unwrap(); // ?
     let signed_with_original = output[2].clone();
 
     let recover_bip39 = BIP39Recover {
-        mnemonic,
+        ty: KeyType::Ed25519,
+        mnemonic: Some(mnemonic),
         passphrase: Some(passphrase),
         output: fresh::location(),
     };
