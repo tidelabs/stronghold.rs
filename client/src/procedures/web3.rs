@@ -26,7 +26,7 @@ pub enum Web3Procedures<T: web3::Transport + Send + Sync = web3::transports::Htt
 }
 
 impl Procedure for Web3Procedures<web3::transports::Http> {
-    type Output = Vec<u8>;
+    type Output = ProcedureOutput;
 
     fn execute<R: Runner>(self, runner: &R) -> Result<Self::Output, ProcedureError> {
         use Web3Procedures::*;
@@ -233,4 +233,12 @@ impl TryFrom<ProcedureOutput> for SignedTx {
         bincode::deserialize(&value.0)
             .map_err(|e| FatalProcedureError::from(format!("Contents can't be deserialized by bincode: {:?}", e)))
     }
+}
+
+#[cfg(test)]
+mod web3_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_web3_procedures() {}
 }

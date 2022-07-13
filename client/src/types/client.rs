@@ -17,6 +17,10 @@ use crate::{
     sync::{KeyProvider, MergePolicy, SyncClients, SyncClientsConfig, SyncSnapshots, SyncSnapshotsConfig},
     ClientError, ClientState, ClientVault, KeyStore, Location, Provider, RecordError, SnapshotError, Store, Stronghold,
 };
+
+#[cfg(feature = "webthree")]
+use crate::procedure::Web3Procedures;
+
 use crypto::keys::x25519;
 use engine::{
     runtime::memories::buffer::Buffer,
@@ -258,6 +262,36 @@ impl Client {
                     for location in log {
                         let _ = self.revoke_data(&location);
                     }
+                    return Err(e);
+                }
+            };
+            out.push(output);
+        }
+        Ok(out)
+    }
+
+    #[cfg(feature = "webthree")]
+    pub fn execute_web3_procedure<P>(&self, procedure: P) -> Result<P::Output, ProcedureError>
+    where
+        P: Procedure + Into<Web3Procedures>,
+    {
+        match procedure.execute(self) {
+            Ok(o) => Ok(o),
+            Err(e) => Err(e),
+        }
+    }
+
+    #[cfg(feature = "webthree")]
+    pub fn chain_web3_procedures<P>(
+        &self,
+        procedures: Vec<Web3Procedures>,
+    ) -> Result<Vec<ProcedureOutput>, ProcedureError> {
+        let mut out = Vec::new();
+
+        for proc in procedures {
+            let output = match proc.execute(self) {
+                Ok(o) => o,
+                Err(e) => {
                     return Err(e);
                 }
             };

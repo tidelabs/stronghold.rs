@@ -4,16 +4,20 @@
 mod clientrunner;
 mod primitives;
 mod types;
-
+#[cfg(feature = "webthree")]
 mod web3;
 
 pub use clientrunner::*;
 
+#[cfg(feature = "webthree")]
+pub use self::web3::{SignedTx, Web3Address, Web3Procedures, Web3SignTransaction};
+
 pub use primitives::{
     AeadCipher, AeadDecrypt, AeadEncrypt, AesKeyWrapCipher, AesKeyWrapDecrypt, AesKeyWrapEncrypt, BIP39Generate,
     BIP39Recover, Chain, ChainCode, ConcatKdf, CopyRecord, Ed25519Sign, GarbageCollect, GenerateKey, Hkdf, Hmac,
-    KeyType, MnemonicLanguage, Pbkdf2Hmac, PublicKey, RevokeData, Sha2Hash, Slip10Derive, Slip10DeriveInput,
-    Slip10Generate, StrongholdProcedure, WriteVault, X25519DiffieHellman,
+    KeyType, MnemonicLanguage, Pbkdf2Hmac, PublicKey, RevokeData, Secp256k1Sign, Sha2Hash, Slip10Derive,
+    Slip10DeriveInput, Slip10Generate, Sr25519Derive, Sr25519Sign, Sr25519Verify, StrongholdProcedure, WriteVault,
+    X25519DiffieHellman,
 };
 pub use types::{
     DeriveSecret, FatalProcedureError, GenerateSecret, Procedure, ProcedureError, ProcedureOutput, UseSecret,
