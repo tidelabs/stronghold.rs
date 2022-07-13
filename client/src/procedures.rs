@@ -4,7 +4,7 @@
 mod clientrunner;
 mod primitives;
 mod types;
-#[cfg(feature = "webthree")]
+
 mod web3;
 
 pub use clientrunner::*;

@@ -25,6 +25,28 @@ pub enum Web3Procedures<T: web3::Transport + Send + Sync = web3::transports::Htt
     Web3Address(Web3Address<T>),
 }
 
+impl Procedure for Web3Procedures<web3::transports::Http> {
+    type Output = Vec<u8>;
+
+    fn execute<R: Runner>(self, runner: &R) -> Result<Self::Output, ProcedureError> {
+        use Web3Procedures::*;
+
+        match self {
+            Web3SignTransaction(proc) => proc.execute(runner).map(|o| o.into()),
+            Web3Address(proc) => proc.execute(runner).map(|o| o.into()),
+        }
+    }
+}
+
+impl Web3Procedures<web3::transports::Http> {
+    pub(crate) fn input(&self) -> Option<Location> {
+        match self {
+            Web3Procedures::Web3SignTransaction(Web3SignTransaction { private_key: input, .. })
+            | Web3Procedures::Web3Address(Web3Address { private_key: input, .. }) => Some(input.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Web3SignTransaction<T: web3::Transport + Send + Sync = web3::transports::Http> {
     accounts: Accounts<T>,
@@ -45,7 +67,7 @@ where
         let signed_tx = futures::executor::block_on(self.accounts.sign_transaction(self.tx, pk_ref))
             .map_err(|e| FatalProcedureError::from(format!("Failed to sign tx: {:?}", e.to_string())))?;
 
-        let tx_ref: SignedTxRef = signed_tx.into();
+        let tx_ref: SignedTx = signed_tx.into();
 
         bincode::serialize(&tx_ref).map_err(|_| FatalProcedureError::from("Unable to serialize transaction".to_owned()))
     }
@@ -80,8 +102,24 @@ where
     }
 }
 
+impl Procedure for Web3SignTransaction<web3::transports::Http> {
+    type Output = Vec<u8>;
+
+    fn execute<R: Runner>(self, runner: &R) -> Result<Self::Output, ProcedureError> {
+        self.exec(runner)
+    }
+}
+
+impl Procedure for Web3Address<web3::transports::Http> {
+    type Output = Vec<u8>;
+
+    fn execute<R: Runner>(self, runner: &R) -> Result<Self::Output, ProcedureError> {
+        self.exec(runner)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignedTxRef {
+pub struct SignedTx {
     pub message_hash: H256,
     pub v: u64,
     pub r: H256,
@@ -150,9 +188,9 @@ fn keccak256(bytes: &[u8]) -> [u8; 32] {
     output
 }
 
-impl From<SignedTransaction> for SignedTxRef {
-    fn from(tx: SignedTransaction) -> SignedTxRef {
-        SignedTxRef {
+impl From<SignedTransaction> for SignedTx {
+    fn from(tx: SignedTransaction) -> SignedTx {
+        SignedTx {
             message_hash: tx.message_hash,
             v: tx.v,
             r: tx.r,
@@ -163,8 +201,8 @@ impl From<SignedTransaction> for SignedTxRef {
     }
 }
 
-impl From<SignedTxRef> for SignedTransaction {
-    fn from(tx: SignedTxRef) -> SignedTransaction {
+impl From<SignedTx> for SignedTransaction {
+    fn from(tx: SignedTx) -> SignedTransaction {
         SignedTransaction {
             message_hash: tx.message_hash,
             v: tx.v,
@@ -173,5 +211,26 @@ impl From<SignedTxRef> for SignedTransaction {
             raw_transaction: tx.raw_transaction,
             transaction_hash: tx.transaction_hash,
         }
+    }
+}
+
+impl From<Web3SignTransaction<web3::transports::Http>> for Web3Procedures {
+    fn from(tx: Web3SignTransaction<web3::transports::Http>) -> Web3Procedures {
+        Web3Procedures::Web3SignTransaction(tx)
+    }
+}
+
+impl From<Web3Address<web3::transports::Http>> for Web3Procedures {
+    fn from(tx: Web3Address<web3::transports::Http>) -> Web3Procedures {
+        Web3Procedures::Web3Address(tx)
+    }
+}
+
+impl TryFrom<ProcedureOutput> for SignedTx {
+    type Error = FatalProcedureError;
+
+    fn try_from(value: ProcedureOutput) -> Result<Self, Self::Error> {
+        bincode::deserialize(&value.0)
+            .map_err(|e| FatalProcedureError::from(format!("Contents can't be deserialized by bincode: {:?}", e)))
     }
 }
