@@ -14,7 +14,7 @@ categories = [ "security" ]
 [features]
 default = [ "std" ]
 p2p = [ "std", "futures", "pin-project", "stronghold-p2p" ]
-webthree = ["web3", "tiny-keccak"]
+webthree = ["web3", "tiny-keccak", "futures"]
 std = [ ]
 
 [dependencies]
@@ -65,6 +65,8 @@ log = { version = "0.4.14" }
 base64 = { version = "0.13.0" }
 regex = { version = "1.5.5" }
 libc = { version = "0.2" }
+jsonrpc-core = "18.0"
+serde_json = "1.0"
 
 [[bench]]
 name = "config"

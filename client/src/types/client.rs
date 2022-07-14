@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[cfg(feature = "webthree")]
-use crate::procedure::Web3Procedures;
+use crate::procedures::Web3Procedures;
 
 use crypto::keys::x25519;
 use engine::{
@@ -271,9 +271,10 @@ impl Client {
     }
 
     #[cfg(feature = "webthree")]
-    pub fn execute_web3_procedure<P>(&self, procedure: P) -> Result<P::Output, ProcedureError>
+    pub fn execute_web3_procedure<P, T>(&self, procedure: P) -> Result<P::Output, ProcedureError>
     where
-        P: Procedure + Into<Web3Procedures>,
+        P: Procedure + Into<Web3Procedures<T>>,
+        T: web3::Transport + Send + Sync,
     {
         match procedure.execute(self) {
             Ok(o) => Ok(o),
@@ -282,10 +283,14 @@ impl Client {
     }
 
     #[cfg(feature = "webthree")]
-    pub fn chain_web3_procedures<P>(
+    pub fn chain_web3_procedures<P, T>(
         &self,
-        procedures: Vec<Web3Procedures>,
-    ) -> Result<Vec<ProcedureOutput>, ProcedureError> {
+        procedures: Vec<Web3Procedures<T>>,
+    ) -> Result<Vec<ProcedureOutput>, ProcedureError>
+    where
+        P: Procedure + Into<Web3Procedures<T>>,
+        T: web3::Transport + Send + Sync,
+    {
         let mut out = Vec::new();
 
         for proc in procedures {
