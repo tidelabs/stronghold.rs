@@ -72,6 +72,16 @@ impl KeyProvider {
             Err(memerror) => Err(memerror),
         }
     }
+
+    pub fn from_password_truncated(password: Vec<u8>) -> Result<Self, MemoryError> {
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&password);
+
+        match NCKey::load(key.to_vec()) {
+            Some(inner) => Ok(Self { inner }),
+            None => Err(MemoryError::NCSizeNotAllowed),
+        }
+    }
 }
 
 #[cfg(test)]
