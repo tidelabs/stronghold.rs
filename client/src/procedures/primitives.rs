@@ -31,6 +31,7 @@ use crypto::{
 use engine::runtime::memories::buffer::{Buffer, Ref};
 use serde::{Deserialize, Serialize};
 use stronghold_utils::GuardDebug;
+use zeroize::Zeroize;
 
 /// Enum that wraps all cryptographic procedures that are supported by Stronghold.
 ///
@@ -365,8 +366,10 @@ impl GenerateSecret for BIP39Generate {
         let mnemonic = bip39::wordlist::encode(&entropy, &wordlist).unwrap();
 
         let mut seed = [0u8; 64];
-        let passphrase = self.passphrase.unwrap_or_else(|| "".into());
+        let mut passphrase = self.passphrase.clone().unwrap_or_else(|| "".into());
         bip39::mnemonic_to_seed(&mnemonic, &passphrase, &mut seed);
+
+        passphrase.zeroize();
 
         Ok(Products {
             secret: seed.to_vec(),
@@ -376,6 +379,12 @@ impl GenerateSecret for BIP39Generate {
 
     fn target(&self) -> &Location {
         &self.output
+    }
+}
+
+impl Drop for BIP39Generate {
+    fn drop(&mut self) {
+        self.passphrase.zeroize();
     }
 }
 
@@ -413,9 +422,13 @@ fn bip39_recover_generic(
     mnemonic: Option<String>,
 ) -> Result<Products<()>, FatalProcedureError> {
     let mut seed = [0u8; 64];
-    let passphrase = passphrase.unwrap_or_else(|| "".into());
-    let mnemonic = mnemonic.unwrap_or_else(|| "".into());
+    let mut passphrase = passphrase.clone().unwrap_or_else(|| "".into());
+    let mut mnemonic = mnemonic.unwrap_or_else(|| "".into());
     bip39::mnemonic_to_seed(&mnemonic, &passphrase, &mut seed);
+
+    passphrase.zeroize();
+    mnemonic.zeroize();
+
     Ok(Products {
         secret: seed.to_vec(),
         output: (),
@@ -842,6 +855,13 @@ impl GenerateSecret for Pbkdf2Hmac {
 
     fn target(&self) -> &Location {
         &self.output
+    }
+}
+
+impl Drop for Pbkdf2Hmac {
+    fn drop(&mut self) {
+        self.password.zeroize();
+        self.salt.zeroize();
     }
 }
 
