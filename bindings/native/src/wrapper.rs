@@ -50,10 +50,11 @@ impl StrongholdWrapper {
 
         log::info!("[Rust] Loading snapshot => {}", snapshot_path);
 
-        let commit_snapshot_path = &SnapshotPath::from_path(snapshot_path.clone());
+        let commit_with_keyprovider_snapshot_path = &SnapshotPath::from_path(snapshot_path.clone());
         let key_provider = &KeyProvider::try_from(key_as_hash.as_ref().to_vec()).unwrap();
 
-        let client = stronghold.load_client_from_snapshot(CLIENT_PATH, key_provider, commit_snapshot_path);
+        let client =
+            stronghold.load_client_from_snapshot(CLIENT_PATH, key_provider, commit_with_keyprovider_snapshot_path);
 
         let client = match client {
             Ok(res) => res,
@@ -92,23 +93,26 @@ impl StrongholdWrapper {
 
         log::info!("[Rust] Client written");
 
-        if let Err(err) = result.commit(key_as_hash) {
+        if let Err(err) = result.commit_with_keyprovider(key_as_hash) {
             return Err(err);
         }
 
         Ok(result)
     }
 
-    fn commit<R>(&self, key_as_hash: R) -> Result<bool, WrapperError>
+    fn commit_with_keyprovider<R>(&self, key_as_hash: R) -> Result<bool, WrapperError>
     where
         R: AsRef<[u8]>,
     {
-        log::info!("[Rust] Committing to snapshot");
+        log::info!("[Rust] commit_with_keyproviderting to snapshot");
 
-        let commit_snapshot_path = &SnapshotPath::from_path(self.snapshot_path.clone());
+        let commit_with_keyprovider_snapshot_path = &SnapshotPath::from_path(self.snapshot_path.clone());
         let key_provider = &KeyProvider::try_from(key_as_hash.as_ref().to_vec()).unwrap();
 
-        match self.stronghold.commit(commit_snapshot_path, key_provider) {
+        match self
+            .stronghold
+            .commit_with_keyprovider(commit_with_keyprovider_snapshot_path, key_provider)
+        {
             Err(_err) => Err(WrapperError::CommitToSnapshot),
             _ => Ok(true),
         }
@@ -150,7 +154,7 @@ impl StrongholdWrapper {
             return Err(WrapperError::ExecuteProcedure(format!("{:?}", _err)));
         }
 
-        self.commit(key_as_hash)
+        self.commit_with_keyprovider(key_as_hash)
     }
 
     pub fn sign(&self, record_path: String, data: Vec<u8>) -> Result<Vec<u8>, WrapperError> {
@@ -218,7 +222,7 @@ impl StrongholdWrapper {
 
         log::info!("[Rust] client stored");
 
-        match self.commit(key_as_hash) {
+        match self.commit_with_keyprovider(key_as_hash) {
             Err(err) => Err(err),
             _ => Ok(chain_code),
         }
@@ -254,7 +258,7 @@ impl StrongholdWrapper {
 
         log::info!("[Rust] client stored");
 
-        self.commit(key_as_hash)
+        self.commit_with_keyprovider(key_as_hash)
     }
 
     pub fn generate_ed25519_keypair<R>(&self, key_as_hash: R, record_path: String) -> Result<bool, WrapperError>
@@ -283,6 +287,6 @@ impl StrongholdWrapper {
 
         log::info!("[Rust] client stored");
 
-        self.commit(key_as_hash)
+        self.commit_with_keyprovider(key_as_hash)
     }
 }

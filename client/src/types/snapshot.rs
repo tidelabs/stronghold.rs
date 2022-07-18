@@ -225,6 +225,7 @@ impl Snapshot {
                     data.extend_from_slice(&*guarded_data);
                     Ok(())
                 })?;
+
                 data.try_into().map_err(|_| SnapshotError::SnapshotKey(vid, rid))?
             }
         };

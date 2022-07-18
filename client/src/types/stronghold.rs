@@ -23,7 +23,10 @@ use crate::{
 #[cfg(feature = "p2p")]
 use crate::{Peer, SpawnNetworkError};
 
-use crypto::keys::x25519;
+use crypto::{
+    hashes::{blake2b::Blake2b256, Digest},
+    keys::x25519,
+};
 use engine::vault::ClientId;
 #[cfg(feature = "p2p")]
 use futures::channel::mpsc::UnboundedSender;
@@ -251,9 +254,14 @@ impl Stronghold {
     }
 
     /// Writes all client states into the [`Snapshot`] file
+    /// Requires an explicit Keyprovider.
     ///
     /// # Example
-    pub fn commit(&self, snapshot_path: &SnapshotPath, keyprovider: &KeyProvider) -> Result<(), ClientError> {
+    pub fn commit_with_keyprovider(
+        &self,
+        snapshot_path: &SnapshotPath,
+        keyprovider: &KeyProvider,
+    ) -> Result<(), ClientError> {
         let clients = self.clients.try_read()?;
 
         if !snapshot_path.exists() {
@@ -285,6 +293,39 @@ impl Stronghold {
 
         snapshot
             .write_to_snapshot(snapshot_path, UseKey::Key(key.try_into().unwrap()))
+            .map_err(|e| ClientError::Inner(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Writes all client states into the [`Snapshot`] file
+    /// uses a keyprovider location.
+    /// # Example
+    pub fn commit(&self, snapshot_path: &SnapshotPath, keyprovider: Location) -> Result<(), ClientError> {
+        let clients = self.clients.try_read()?;
+
+        if !snapshot_path.exists() {
+            let path = snapshot_path.as_path().parent().ok_or_else(|| {
+                ClientError::SnapshotFileMissing("Parent directory of snapshot file does not exist".to_string())
+            })?;
+            if let Err(io_error) = std::fs::create_dir_all(path) {
+                return Err(ClientError::SnapshotFileMissing(
+                    "Could not create snapshot file".to_string(),
+                ));
+            }
+        }
+
+        let ids: Vec<ClientId> = clients.iter().map(|(id, _)| *id).collect();
+        drop(clients);
+
+        for client_id in ids {
+            self.write(client_id)?;
+        }
+
+        let snapshot = self.snapshot.try_read()?;
+
+        snapshot
+            .write_to_snapshot(snapshot_path, UseKey::Stored(keyprovider))
             .map_err(|e| ClientError::Inner(e.to_string()))?;
 
         Ok(())
@@ -346,7 +387,33 @@ impl Stronghold {
 
         Ok(())
     }
+
+    /// Stores the key provider in the snapshot state.  
+    pub fn store_keyprovider<P>(
+        &self,
+        keyprovider: KeyProvider, // [u8; 32] + zeroize
+        client_path: P,
+        location: Location,
+    ) -> Result<Location, ClientError>
+    where
+        P: AsRef<[u8]>,
+    {
+        // let (vault_id, record_id) = location.resolve();
+        let mut snapshot = self.snapshot.try_write()?;
+        let buffer = keyprovider
+            .try_unlock()
+            .map_err(|e| ClientError::Inner(format!("{:?}", e)))?;
+        let key: Vec<u8> = buffer.borrow().deref().try_into().unwrap();
+
+        snapshot
+            .store_secret_key(key, location.clone())
+            .map_err(|e| ClientError::Inner(format!("{:?}", e)))?;
+        drop(snapshot);
+
+        Ok(location)
+    }
 }
+
 
 // networking functionality
 

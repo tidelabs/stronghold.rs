@@ -14,6 +14,8 @@ use engine::{
 use stronghold_utils::GuardDebug;
 use zeroize::Zeroize;
 
+use crypto::hashes::{blake2b::Blake2b256, Digest};
+
 use crate::internal::Provider;
 
 /// The [`KeyProvider`] keeps secrets in [`NCKey`] at rest,
@@ -82,6 +84,23 @@ impl KeyProvider {
             None => Err(MemoryError::NCSizeNotAllowed),
         }
     }
+
+    pub fn from_hashed_password(password: Vec<u8>) -> Result<Self, MemoryError> {
+        let mut key = [0u8; 32];
+        let hash = hash_blake2b(password);
+        key.copy_from_slice(&hash);
+
+        match NCKey::load(key.to_vec()) {
+            Some(inner) => Ok(Self { inner }),
+            None => Err(MemoryError::NCSizeNotAllowed),
+        }
+    }
+}
+
+pub fn hash_blake2b(input: Vec<u8>) -> Vec<u8> {
+    let mut hasher = Blake2b256::new();
+    hasher.update(input);
+    hasher.finalize().to_vec()
 }
 
 #[cfg(test)]
