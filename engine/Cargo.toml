@@ -1,6 +1,6 @@
 [package]
 name = "stronghold_engine"
-version = "0.5.2"
+version = "0.5.3"
 authors = [
   "IOTA Stiftung",
   "tensorprogramming <tensordeveloper@gmail.com>"
@@ -36,11 +36,9 @@ serde = { version = "1.0", features = [ "derive" ] }
   optional = true
   default-features = false
 
-  
-[dependencies.iota-crypto]
-git = "https://tributary.semantic-network.tech/semnet/Libs/crypto.rs"
-branch = "feat/update-v8"
-features = [ "random", "chacha", "hmac", "sha", "x25519", "blake2b" ]
+  [dependencies.iota-crypto]
+  version = "0.12.1"
+  features = [ "random", "chacha", "hmac", "sha", "x25519", "blake2b" ]
 
 [dev-dependencies]
 tempfile = "3.1.0"
@@ -48,6 +46,10 @@ proptest = "1.0.0"
 criterion = "0.3.3"
 json = "0.12"
 
-  [dev-dependencies.stronghold-utils]
-  path = "../utils"
-  version = "0.4.0"
+[[bench]]
+name = "engine_bench"
+harness = false
+
+[dev-dependencies.stronghold-utils]
+path = "../utils"
+version = "0.4.1"

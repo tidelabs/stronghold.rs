@@ -3,6 +3,9 @@
 
 use crypto::ciphers::aes_kw::AesKeyWrap;
 
+#[cfg(feature = "insecure")]
+use crate::procedures::CompareSecret;
+
 use crate::{
     procedures::{
         AeadCipher, AeadDecrypt, AeadEncrypt, AesKeyWrapCipher, AesKeyWrapDecrypt, AesKeyWrapEncrypt, BIP39Generate,
@@ -16,7 +19,7 @@ use crate::{
 
 use crypto::{
     ciphers::{aes_gcm::Aes256Gcm, chacha::XChaCha20Poly1305},
-    keys::slip10::{self, ChainCode},
+    keys::slip10::ChainCode,
     signatures::ed25519,
 };
 use stronghold_utils::random;
@@ -229,8 +232,8 @@ async fn usecase_ed25519() -> Result<(), Box<dyn std::error::Error>> {
     let stronghold: Stronghold = Stronghold::default();
     let client: Client = stronghold.create_client(b"client_path").unwrap();
 
-    let vault_path = random::bytestring(1024);
-    let seed = Location::generic(vault_path.clone(), random::bytestring(1024));
+    let vault_path = random::variable_bytestring(1024);
+    let seed = Location::generic(vault_path.clone(), random::variable_bytestring(1024));
 
     if fresh::coinflip() {
         let size_bytes = if fresh::coinflip() {
@@ -239,8 +242,8 @@ async fn usecase_ed25519() -> Result<(), Box<dyn std::error::Error>> {
             None
         };
         let slip10_generate = Slip10Generate {
+            curve: crypto::keys::slip10::Curve::Ed25519,
             size_bytes,
-            curve: slip10::Curve::Ed25519,
             output: seed.clone(),
         };
 
@@ -255,10 +258,10 @@ async fn usecase_ed25519() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (_path, chain) = fresh::hd_path();
-    let key = Location::generic(vault_path, random::bytestring(1024));
+    let key = Location::generic(vault_path, random::variable_bytestring(1024));
 
     let slip10_derive = Slip10Derive {
-        curve: slip10::Curve::Ed25519,
+        curve: crypto::keys::slip10::Curve::Ed25519,
         chain,
         input: Slip10DeriveInput::Seed(seed),
         output: key.clone(),
@@ -274,7 +277,7 @@ async fn usecase_ed25519() -> Result<(), Box<dyn std::error::Error>> {
     let res: Vec<u8> = client.execute_procedure(ed25519_pk).unwrap();
     pk.copy_from_slice(&res);
 
-    let msg = fresh::bytestring(4096);
+    let msg = fresh::variable_bytestring(4096);
 
     let ed25519_sign = Ed25519Sign {
         private_key: key,
@@ -289,66 +292,6 @@ async fn usecase_ed25519() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// #[tokio::test]
-// async fn usecase_sr25519() -> Result<(), Box<dyn std::error::Error>> {
-//     let stronghold: Stronghold = Stronghold::default();
-//     let client: Client = stronghold.create_client(b"client_path").unwrap();
-
-//     let vault_path = random::bytestring(1024);
-//     let seed = Location::generic(vault_path.clone(), random::bytestring(1024));
-
-//     if fresh::coinflip() {
-//         let size_bytes = if fresh::coinflip() {
-//             Some(fresh::usize(1024))
-//         } else {
-//             None
-//         };
-//         let slip10_generate = Slip10Generate {
-//             size_bytes,
-//             output: seed.clone(),
-//         };
-
-//         assert!(client.execute_procedure(slip10_generate).is_ok());
-//     } else {
-//         let bip32_gen = BIP39Generate {
-//             passphrase: random::passphrase(),
-//             output: seed.clone(),
-//             language: MnemonicLanguage::English,
-//         };
-//         assert!(client.execute_procedure(bip32_gen).is_ok());
-//     }
-
-//     let (_path, chain) = fresh::hd_path();
-//     let key = Location::generic(vault_path, random::bytestring(1024));
-
-//     let slip10_derive = Slip10Derive {
-//         chain,
-//         input: Slip10DeriveInput::Seed(seed),
-//         output: key.clone(),
-//     };
-//     assert!(client.execute_procedure(slip10_derive).is_ok());
-
-//     let sr25519_pk = PublicKey {
-//         private_key: key.clone(),
-//         ty: KeyType::Sr25519,
-//     };
-//     let pk: [u8; sr25519::PUBLIC_KEY_LENGTH] = client.execute_procedure(sr25519_pk).unwrap();
-
-//     let msg = fresh::bytestring(4096);
-
-//     let sr25519_sign = Sr25519Sign {
-//         private_key: key,
-//         msg: msg.clone(),
-//     };
-//     let sig: [u8; sr25519::SIGNATURE_LENGTH] = client.execute_procedure(sr25519_sign).unwrap();
-
-//     let pk = sr25519::PublicKey::try_from_bytes(pk).unwrap();
-//     let sig = sr25519::Signature::from_bytes(sig);
-//     assert!(pk.verify(&sig, &msg));
-
-//     Ok(())
-// }
-
 #[tokio::test]
 async fn usecase_slip10derive_intermediate_keys() -> Result<(), Box<dyn std::error::Error>> {
     let stronghold: Stronghold = Stronghold::default();
@@ -357,7 +300,7 @@ async fn usecase_slip10derive_intermediate_keys() -> Result<(), Box<dyn std::err
     let seed = fresh::location();
 
     let slip10_generate = Slip10Generate {
-        curve: slip10::Curve::Ed25519,
+        curve: crypto::keys::slip10::Curve::Ed25519,
         output: seed.clone(),
         size_bytes: None,
     };
@@ -368,7 +311,7 @@ async fn usecase_slip10derive_intermediate_keys() -> Result<(), Box<dyn std::err
 
     let cc0: ChainCode = {
         let slip10_derive = Slip10Derive {
-            curve: slip10::Curve::Ed25519,
+            curve: crypto::keys::slip10::Curve::Ed25519,
             input: Slip10DeriveInput::Seed(seed.clone()),
             chain: chain0.join(&chain1),
             output: fresh::location(),
@@ -381,7 +324,7 @@ async fn usecase_slip10derive_intermediate_keys() -> Result<(), Box<dyn std::err
         let intermediate = fresh::location();
 
         let slip10_derive_intermediate = Slip10Derive {
-            curve: slip10::Curve::Ed25519,
+            curve: crypto::keys::slip10::Curve::Ed25519,
             input: Slip10DeriveInput::Seed(seed),
             chain: chain0,
             output: intermediate.clone(),
@@ -390,7 +333,7 @@ async fn usecase_slip10derive_intermediate_keys() -> Result<(), Box<dyn std::err
         assert!(client.execute_procedure(slip10_derive_intermediate).is_ok());
 
         let slip10_derive_child = Slip10Derive {
-            curve: slip10::Curve::Ed25519,
+            curve: crypto::keys::slip10::Curve::Ed25519,
             input: Slip10DeriveInput::Key(intermediate),
             chain: chain1,
             output: fresh::location(),
@@ -408,15 +351,15 @@ async fn usecase_ed25519_as_complex() -> Result<(), Box<dyn std::error::Error>> 
     let stronghold: Stronghold = Stronghold::default();
     let client: Client = stronghold.create_client(b"client_path").unwrap();
 
-    let msg = fresh::bytestring(4096);
+    let msg = fresh::variable_bytestring(4096);
 
     let generate = Slip10Generate {
-        curve: slip10::Curve::Ed25519,
+        curve: crypto::keys::slip10::Curve::Ed25519,
         size_bytes: None,
         output: fresh::location(),
     };
     let derive = Slip10Derive {
-        curve: slip10::Curve::Ed25519,
+        curve: crypto::keys::slip10::Curve::Ed25519,
         input: Slip10DeriveInput::Seed(generate.target().clone()),
         output: fresh::location(),
         chain: fresh::hd_path().1,
@@ -529,8 +472,8 @@ async fn test_aead(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crypto::ciphers::traits::*;
 
-    let test_plaintext = random::bytestring(4096);
-    let test_associated_data = random::bytestring(4096);
+    let test_plaintext = random::variable_bytestring(4096);
+    let test_associated_data = random::variable_bytestring(4096);
     let nonce_len = match cipher {
         AeadCipher::Aes256Gcm => Aes256Gcm::NONCE_LENGTH,
         AeadCipher::XChaCha20Poly1305 => XChaCha20Poly1305::NONCE_LENGTH,
@@ -672,7 +615,7 @@ async fn usecase_diffie_hellman() -> Result<(), Box<dyn std::error::Error>> {
     let mut salt = vec![];
     salt.extend_from_slice(&pub_key_1);
     salt.extend_from_slice(&pub_key_2);
-    let label = random::bytestring(1024);
+    let label = random::variable_bytestring(1024);
 
     let key_1_2 = fresh::location();
     let dh_1_2 = X25519DiffieHellman {
@@ -726,7 +669,7 @@ async fn usecase_recover_bip39() -> Result<(), Box<dyn std::error::Error>> {
 
     let passphrase = random::string(4096);
     let (_path, chain) = fresh::hd_path();
-    let message = random::bytestring(4095);
+    let message = random::variable_bytestring(4095);
 
     let generate_bip39 = BIP39Generate {
         language: MnemonicLanguage::English,
@@ -734,7 +677,7 @@ async fn usecase_recover_bip39() -> Result<(), Box<dyn std::error::Error>> {
         output: fresh::location(),
     };
     let derive_from_original = Slip10Derive {
-        curve: slip10::Curve::Ed25519,
+        curve: crypto::keys::slip10::Curve::Ed25519,
         input: Slip10DeriveInput::Seed(generate_bip39.target().clone()),
         chain: chain.clone(),
         output: fresh::location(),
@@ -762,7 +705,7 @@ async fn usecase_recover_bip39() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let derive_from_recovered = Slip10Derive {
-        curve: slip10::Curve::Ed25519,
+        curve: crypto::keys::slip10::Curve::Ed25519,
         input: Slip10DeriveInput::Seed(recover_bip39.target().clone()),
         chain,
         output: fresh::location(),
@@ -789,7 +732,7 @@ async fn usecase_move_record() -> Result<(), Box<dyn std::error::Error>> {
     let stronghold: Stronghold = Stronghold::default();
     let client: Client = stronghold.create_client(b"client_path").unwrap();
 
-    let test_msg = random::bytestring(4096);
+    let test_msg = random::variable_bytestring(4096);
 
     let first_location = fresh::location();
     let generate_key = GenerateKey {

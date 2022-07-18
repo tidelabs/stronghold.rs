@@ -1,13 +1,13 @@
 [package]
 name = "stronghold-rlu"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 authors = [ "IOTA Stiftung" ]
 license = "Apache-2.0"
 description = "Read-Log-Update software transactional memory like synchronization mechanism"
 repository = "https://github.com/iotaledger/stronghold.rs"
-homepage = "https://wiki.iota.org/stronghold.rs/welcome"
-documentation = "https://wiki.iota.org/stronghold.rs/welcome"
+homepage = "https://wiki.iota.org/stronghold.rs/getting_started"
+documentation = "https://wiki.iota.org/stronghold.rs/getting_started"
 keywords = [ "iota", "stronghold", "security" ]
 
 [lib]

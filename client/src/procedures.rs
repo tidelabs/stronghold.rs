@@ -12,6 +12,9 @@ pub use clientrunner::*;
 #[cfg(feature = "webthree")]
 pub use self::web3::{SignedTx, Web3Address, Web3Procedures, Web3SignTransaction};
 
+#[cfg(feature = "insecure")]
+pub use primitives::CompareSecret;
+
 pub use primitives::{
     AeadCipher, AeadDecrypt, AeadEncrypt, AesKeyWrapCipher, AesKeyWrapDecrypt, AesKeyWrapEncrypt, BIP39Generate,
     BIP39Recover, Chain, ChainCode, ConcatKdf, CopyRecord, Ed25519Sign, GarbageCollect, GenerateKey, Hkdf, Hmac,

@@ -1,14 +1,14 @@
 [package]
 name = "stronghold-p2p"
-version = "0.4.1"
+version = "0.4.2"
 authors = [ "IOTA Stiftung", "Elena Frank <elena.frank@iota.org" ]
 edition = "2021"
 readme = "README.md"
 license = "Apache-2.0"
 description = "Networking functionality for Stronghold"
 repository = "https://github.com/iotaledger/stronghold.rs"
-homepage = "https://wiki.iota.org/stronghold.rs/welcome"
-documentation = "https://wiki.iota.org/stronghold.rs/welcome"
+homepage = "https://wiki.iota.org/stronghold.rs/getting_started"
+documentation = "https://wiki.iota.org/stronghold.rs/getting_started"
 keywords = [ "iota", "stronghold", "security", "networking" ]
 categories = [ "security" ]
 
@@ -35,6 +35,6 @@ tcp-transport = [ "libp2p/tcp-tokio", "libp2p/dns-tokio", "libp2p/websocket" ]
 actix-rt = "2.5"
 regex = "1.5"
 iota_stronghold = { path = "../client", features = [ "p2p" ] }
-stronghold-utils = { version = "0.4.0", path = "../utils" }
+stronghold-utils = { version = "0.4.1", path = "../utils" }
 tokio = { version = "1.10", features = [ "time", "macros", "io-std", "io-util" ] }
 libp2p = { version = "0.43.0", default-features = false, features = [ "tcp-tokio" ] }
