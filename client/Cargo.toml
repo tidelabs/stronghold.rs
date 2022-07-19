@@ -31,6 +31,7 @@ rlu = { package = "stronghold-rlu", path = "../rlu/", version = "0.4.0" }
 engine = { package = "stronghold_engine", path = "../engine", version = "0.5.3" }
 stronghold_utils = { package = "stronghold-utils", path = "../utils/", version = "0.4.1" }
 stronghold_derive = { package = "stronghold-derive", path = "../derive", version = "0.3.1" }
+rust-argon2 = { version = "=1.0.0" }
 
 web3 = { git = "https://github.com/tomusdrw/rust-web3", rev = "8796c88c4cb95864bdfeffb40ebb061c283aca74", optional = true }
 tiny-keccak = {version = "2.0", optional = true}
@@ -70,6 +71,7 @@ regex = { version = "1.5.5" }
 libc = { version = "0.2" }
 jsonrpc-core = "18.0"
 serde_json = "1.0"
+
 
 [[bench]]
 name = "config"
