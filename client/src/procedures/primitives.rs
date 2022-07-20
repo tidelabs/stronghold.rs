@@ -992,23 +992,18 @@ impl UseSecret<1> for Sr25519Verify {
     type Output = bool;
 
     fn use_secret(self, guards: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
-        let public_key = if let Some(public) = self.public_key {
-            let mut raw = [0u8; 32];
-            raw.copy_from_slice(&public);
-            sr25519::PublicKey::from_raw(raw)
+        let sk = sr25519_key_pair(guards[0].borrow())?;
+        if self.signature.len() != 64 {
+            Err(FatalProcedureError::from("Invalid signature length".to_owned()))
         } else {
-            let sk = sr25519_key_pair(guards[0].borrow())?;
-            sk.public_key()
-        };
+            let mut sig = [0u8; 64];
+            sig.copy_from_slice(&self.signature);
 
-        if self.signature.len() == 64 {
-            let sig = sr25519::Signature::from_slice(&self.signature)?;
+            let sig = sr25519::Signature::from_raw(sig);
 
-            let b = public_key.verify(&sig, &self.msg);
+            let b = sk.public_key().verify(&sig, &self.msg);
 
-            return Ok(b);
-        } else {
-            return Err(FatalProcedureError::from("Invalid signature length".to_owned()));
+            Ok(b)
         }
     }
 
