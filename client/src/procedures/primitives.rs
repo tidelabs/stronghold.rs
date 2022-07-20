@@ -983,6 +983,7 @@ impl UseSecret<1> for Sr25519Sign {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sr25519Verify {
     pub msg: Vec<u8>,
+    pub public_key: Option<Vec<u8>>,
     pub signature: Vec<u8>,
     pub location: Location,
 }
@@ -991,11 +992,24 @@ impl UseSecret<1> for Sr25519Verify {
     type Output = bool;
 
     fn use_secret(self, guards: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
-        let sk = sr25519_key_pair(guards[0].borrow())?;
-        let sig = sr25519::Signature::from_slice(&self.signature)?;
-        let b = sk.public_key().verify(&sig, &self.msg);
+        let public_key = if let Some(public) = self.public_key {
+            let mut raw = [0u8; 32];
+            raw.copy_from_slice(&public);
+            sr25519::PublicKey::from_raw(raw)
+        } else {
+            let sk = sr25519_key_pair(guards[0].borrow())?;
+            sk.public_key()
+        };
 
-        Ok(b)
+        if self.signature.len() != 64 {
+            return Err(FatalProcedureError::from("Invalid signature length".to_owned()));
+        } else {
+            let sig = sr25519::Signature::from_slice(&self.signature)?;
+
+            let b = public_key.verify(&sig, &self.msg);
+
+            Ok(b)
+        }
     }
 
     fn source(&self) -> [Location; 1] {
