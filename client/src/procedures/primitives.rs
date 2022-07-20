@@ -1001,14 +1001,14 @@ impl UseSecret<1> for Sr25519Verify {
             sk.public_key()
         };
 
-        if self.signature.len() != 64 {
-            return Err(FatalProcedureError::from("Invalid signature length".to_owned()));
-        } else {
+        if self.signature.len() == 64 {
             let sig = sr25519::Signature::from_slice(&self.signature)?;
 
             let b = public_key.verify(&sig, &self.msg);
 
-            Ok(b)
+            return Ok(b);
+        } else {
+            return Err(FatalProcedureError::from("Invalid signature length".to_owned()));
         }
     }
 
