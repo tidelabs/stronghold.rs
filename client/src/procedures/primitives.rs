@@ -983,7 +983,6 @@ impl UseSecret<1> for Sr25519Sign {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sr25519Verify {
     pub msg: Vec<u8>,
-    pub public_key: Option<Vec<u8>>,
     pub signature: Vec<u8>,
     pub location: Location,
 }
