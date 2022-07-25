@@ -295,6 +295,9 @@ impl Stronghold {
             .write_to_snapshot(snapshot_path, UseKey::Key(key.try_into().unwrap()))
             .map_err(|e| ClientError::Inner(e.to_string()))?;
 
+        drop(snapshot);
+        key.zeroize();
+
         Ok(())
     }
 
@@ -327,6 +330,8 @@ impl Stronghold {
         snapshot
             .write_to_snapshot(snapshot_path, UseKey::Stored(keyprovider))
             .map_err(|e| ClientError::Inner(e.to_string()))?;
+
+        drop(snapshot);
 
         Ok(())
     }
@@ -389,15 +394,11 @@ impl Stronghold {
     }
 
     /// Stores the key provider in the snapshot state.  
-    pub fn store_keyprovider<P>(
+    pub fn store_keyprovider(
         &self,
         keyprovider: KeyProvider, // [u8; 32] + zeroize
-        client_path: P,
         location: Location,
-    ) -> Result<Location, ClientError>
-    where
-        P: AsRef<[u8]>,
-    {
+    ) -> Result<Location, ClientError> {
         // let (vault_id, record_id) = location.resolve();
         let mut snapshot = self.snapshot.try_write()?;
         let buffer = keyprovider
@@ -408,12 +409,13 @@ impl Stronghold {
         snapshot
             .store_secret_key(key, location.clone())
             .map_err(|e| ClientError::Inner(format!("{:?}", e)))?;
+
         drop(snapshot);
+        key.zeroize();
 
         Ok(location)
     }
 }
-
 
 // networking functionality
 

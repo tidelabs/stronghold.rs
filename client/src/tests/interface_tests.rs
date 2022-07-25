@@ -561,7 +561,7 @@ fn test_store_key_provider_in_snapshot_state() {
 
     assert!(vault.write_secret(location, payload.clone()).is_ok());
 
-    let store_res = stronghold.store_keyprovider(keyprovider, client_path, pass_loc.clone());
+    let store_res = stronghold.store_keyprovider(keyprovider, pass_loc.clone());
 
     assert!(store_res.is_ok());
 
