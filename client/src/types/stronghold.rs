@@ -296,7 +296,7 @@ impl Stronghold {
             .map_err(|e| ClientError::Inner(e.to_string()))?;
 
         drop(snapshot);
-        key.zeroize();
+        drop(keyprovider);
 
         Ok(())
     }
@@ -411,7 +411,7 @@ impl Stronghold {
             .map_err(|e| ClientError::Inner(format!("{:?}", e)))?;
 
         drop(snapshot);
-        key.zeroize();
+        drop(keyprovider);
 
         Ok(location)
     }
