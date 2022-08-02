@@ -320,6 +320,7 @@ pub enum KeyType {
     Ed25519,
     X25519,
     Secp256k1,
+    Secp256k1Compressed,
     Sr25519,
 }
 
@@ -408,6 +409,7 @@ impl GenerateSecret for BIP39Recover {
             KeyType::Ed25519 => bip39_recover_generic(self.passphrase, self.mnemonic),
             KeyType::Sr25519 => bip39_recover_sr25519(self.passphrase, self.mnemonic),
             KeyType::Secp256k1 => bip39_recover_generic(self.passphrase, self.mnemonic),
+            KeyType::Secp256k1Compressed => bip39_recover_generic(self.passphrase, self.mnemonic),
             KeyType::X25519 => Err(FatalProcedureError::from("X25519 is not supported".to_owned())),
         }
     }
@@ -628,6 +630,7 @@ impl GenerateSecret for GenerateKey {
             KeyType::X25519 => x25519::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
             KeyType::Secp256k1 => secp256k1::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
             KeyType::Sr25519 => sr25519::KeyPair::generate().map(|sk| sk.seed())?,
+            KeyType::Secp256k1Compressed => secp256k1::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
         };
         Ok(Products { secret, output: () })
     }
@@ -666,6 +669,10 @@ impl UseSecret<1> for PublicKey {
             KeyType::Secp256k1 => {
                 let sk = secp256k1_secret_key(guards[0].borrow())?;
                 Ok(sk.public_key().to_bytes().to_vec())
+            }
+            KeyType::Secp256k1Compressed => {
+                let sk = secp256k1_secret_key(guards[0].borrow())?;
+                Ok(sk.public_key().to_compressed_bytes().to_vec())
             }
         }
     }
