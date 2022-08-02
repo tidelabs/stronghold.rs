@@ -63,7 +63,7 @@ pub enum StrongholdProcedure {
     // Final byte in return is the recovery_id.
     Secp256k1Sign(Secp256k1Sign),
     Sr25519Derive(Sr25519Derive),
-    Sr25519Verify(Sr25519Verify),
+    Verify(Verify),
 }
 
 impl Procedure for StrongholdProcedure {
@@ -95,7 +95,7 @@ impl Procedure for StrongholdProcedure {
             Sr25519Sign(proc) => proc.execute(runner).map(|o| o.into()),
             Secp256k1Sign(proc) => proc.execute(runner).map(|o| o.into()),
             Sr25519Derive(proc) => proc.execute(runner).map(|o| o.into()),
-            Sr25519Verify(proc) => proc.execute(runner).map(|o| o.into()),
+            Verify(proc) => proc.execute(runner).map(|o| o.into()),
         }
     }
 }
@@ -125,7 +125,7 @@ impl StrongholdProcedure {
             | StrongholdProcedure::AeadEncrypt(AeadEncrypt { key: input, .. })
             | StrongholdProcedure::AeadDecrypt(AeadDecrypt { key: input, .. })
             | StrongholdProcedure::Sr25519Derive(Sr25519Derive { input, .. })
-            | StrongholdProcedure::Sr25519Verify(Sr25519Verify { location: input, .. }) => Some(input.clone()),
+            | StrongholdProcedure::Verify(Verify { location: input, .. }) => Some(input.clone()),
             _ => None,
         }
     }
@@ -202,7 +202,7 @@ macro_rules! generic_procedures {
 
 generic_procedures! {
     // Stronghold procedures that implement the `UseSecret` trait.
-    UseSecret<1> => { PublicKey, Ed25519Sign, Hmac, AeadEncrypt, AeadDecrypt, Sr25519Sign, Secp256k1Sign, Sr25519Verify },
+    UseSecret<1> => { PublicKey, Ed25519Sign, Hmac, AeadEncrypt, AeadDecrypt, Sr25519Sign, Secp256k1Sign, Verify },
     UseSecret<2> => { AesKeyWrapEncrypt },
     // Stronghold procedures that implement the `DeriveSecret` trait.
     DeriveSecret<1> => { CopyRecord, Slip10Derive, X25519DiffieHellman, Hkdf, ConcatKdf, AesKeyWrapDecrypt, Sr25519Derive }
@@ -408,8 +408,7 @@ impl GenerateSecret for BIP39Recover {
         match self.ty {
             KeyType::Ed25519 => bip39_recover_generic(self.passphrase, self.mnemonic),
             KeyType::Sr25519 => bip39_recover_sr25519(self.passphrase, self.mnemonic),
-            KeyType::Secp256k1 => bip39_recover_generic(self.passphrase, self.mnemonic),
-            KeyType::Secp256k1Compressed => bip39_recover_generic(self.passphrase, self.mnemonic),
+            KeyType::Secp256k1 | KeyType::Secp256k1Compressed => bip39_recover_generic(self.passphrase, self.mnemonic),
             KeyType::X25519 => Err(FatalProcedureError::from("X25519 is not supported".to_owned())),
         }
     }
@@ -628,9 +627,10 @@ impl GenerateSecret for GenerateKey {
         let secret = match self.ty {
             KeyType::Ed25519 => ed25519::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
             KeyType::X25519 => x25519::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
-            KeyType::Secp256k1 => secp256k1::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
+            KeyType::Secp256k1 | KeyType::Secp256k1Compressed => {
+                secp256k1::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?
+            }
             KeyType::Sr25519 => sr25519::KeyPair::generate().map(|sk| sk.seed())?,
-            KeyType::Secp256k1Compressed => secp256k1::SecretKey::generate().map(|sk| sk.to_bytes().to_vec())?,
         };
         Ok(Products { secret, output: () })
     }
@@ -988,33 +988,94 @@ impl UseSecret<1> for Sr25519Sign {
 /// Verifies the signature of a message with a Sr25519 key pair.  Returns `[0]` or `[1]`
 /// where `0` is false and `1` is true.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sr25519Verify {
+pub struct Verify {
+    pub ty: KeyType,
     pub msg: Vec<u8>,
     pub signature: Vec<u8>,
     pub location: Location,
 }
 
-impl UseSecret<1> for Sr25519Verify {
+impl UseSecret<1> for Verify {
     type Output = bool;
 
     fn use_secret(self, guards: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
-        let sk = sr25519_key_pair(guards[0].borrow())?;
-        if self.signature.len() != 64 {
-            Err(FatalProcedureError::from("Invalid signature length".to_owned()))
-        } else {
-            let mut sig = [0u8; 64];
-            sig.copy_from_slice(&self.signature);
+        match self.ty {
+            KeyType::Ed25519 => {
+                let sk = ed25519_secret_key(guards[0].borrow())?;
 
-            let sig = sr25519::Signature::from_raw(sig);
+                verify_ed25519(sk, self.signature, self.msg)
+            }
+            KeyType::Secp256k1Compressed | KeyType::Secp256k1 => {
+                let sk = secp256k1_secret_key(guards[0].borrow())?;
 
-            let b = sk.public_key().verify(&sig, &self.msg);
+                verify_secp256k1(sk, self.signature, self.msg)
+            }
+            KeyType::Sr25519 => {
+                let sk = sr25519_key_pair(guards[0].borrow())?;
 
-            Ok(b)
+                verify_sr25519(sk, self.signature, self.msg)
+            }
+            KeyType::X25519 => Err(FatalProcedureError::from("X25519 is not supported".to_owned())),
         }
     }
 
     fn source(&self) -> [Location; 1] {
         [self.location.clone()]
+    }
+}
+
+fn verify_ed25519(
+    secret_key: ed25519::SecretKey,
+    signature: Vec<u8>,
+    msg: Vec<u8>,
+) -> Result<bool, FatalProcedureError> {
+    if signature.len() != 64 {
+        Err(FatalProcedureError::from("Invalid signature length".to_owned()))
+    } else {
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(&signature);
+
+        let sig = ed25519::Signature::from_bytes(sig);
+
+        let b = secret_key.public_key().verify(&sig, &msg);
+
+        Ok(b)
+    }
+}
+
+fn verify_secp256k1(
+    secret_key: secp256k1::SecretKey,
+    signature: Vec<u8>,
+    msg: Vec<u8>,
+) -> Result<bool, FatalProcedureError> {
+    if signature.len() != 64 {
+        Err(FatalProcedureError::from("Invalid signature length".to_owned()))
+    } else {
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(&signature);
+        let mut mg = [0u8; 32];
+        mg.copy_from_slice(&msg);
+
+        let sig = secp256k1::Signature::from_bytes(&sig)?;
+
+        let b = secret_key.public_key().verify(&mg, &sig);
+
+        Ok(b)
+    }
+}
+
+fn verify_sr25519(keypair: sr25519::KeyPair, signature: Vec<u8>, msg: Vec<u8>) -> Result<bool, FatalProcedureError> {
+    if signature.len() != 64 {
+        Err(FatalProcedureError::from("Invalid signature length".to_owned()))
+    } else {
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(&signature);
+
+        let sig = sr25519::Signature::from_raw(sig);
+
+        let b = keypair.public_key().verify(&sig, &msg);
+
+        Ok(b)
     }
 }
 
