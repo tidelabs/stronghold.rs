@@ -19,7 +19,7 @@ pub use primitives::{
     AeadCipher, AeadDecrypt, AeadEncrypt, AesKeyWrapCipher, AesKeyWrapDecrypt, AesKeyWrapEncrypt, BIP39Generate,
     BIP39Recover, Chain, ChainCode, ConcatKdf, CopyRecord, Ed25519Sign, GarbageCollect, GenerateKey, Hkdf, Hmac,
     KeyType, MnemonicLanguage, Pbkdf2Hmac, PublicKey, RevokeData, Secp256k1Sign, Sha2Hash, Slip10Derive,
-    Slip10DeriveInput, Slip10Generate, Sr25519Derive, Sr25519Sign, Sr25519Verify, StrongholdProcedure, WriteVault,
+    Slip10DeriveInput, Slip10Generate, Sr25519Derive, Sr25519Sign, StrongholdProcedure, Verify, WriteVault,
     X25519DiffieHellman,
 };
 pub use types::{
