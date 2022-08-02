@@ -291,10 +291,9 @@ impl Client {
         P: Procedure + Into<Web3Procedures<T>>,
         T: web3::Transport + Send + Sync,
     {
-        match procedure.execute(self) {
-            Ok(o) => Ok(o),
-            Err(e) => Err(e),
-        }
+        let res = self.chain_web3_procedures(vec![procedure.into()]);
+        let mapped = res.map(|mut vec| vec.pop().unwrap().try_into().ok().unwrap())?;
+        Ok(mapped)
     }
 
     #[cfg(feature = "webthree")]
