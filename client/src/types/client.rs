@@ -297,12 +297,11 @@ impl Client {
     }
 
     #[cfg(feature = "webthree")]
-    pub fn chain_web3_procedures<P, T>(
+    pub fn chain_web3_procedures<T>(
         &self,
         procedures: Vec<Web3Procedures<T>>,
     ) -> Result<Vec<ProcedureOutput>, ProcedureError>
     where
-        P: Procedure + Into<Web3Procedures<T>>,
         T: web3::Transport + Send + Sync,
     {
         let mut out = Vec::new();
