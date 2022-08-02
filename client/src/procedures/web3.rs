@@ -55,9 +55,9 @@ where
 
 #[derive(Debug, Clone)]
 pub struct Web3SignTransaction<T: web3::Transport + Send + Sync> {
-    accounts: Accounts<T>,
-    tx: web3::types::TransactionParameters,
-    private_key: Location,
+    pub accounts: Accounts<T>,
+    pub tx: web3::types::TransactionParameters,
+    pub private_key: Location,
 }
 
 impl<T> UseSecret<1> for Web3SignTransaction<T>
@@ -85,8 +85,8 @@ where
 
 #[derive(Debug, Clone)]
 pub struct Web3Address<T: web3::Transport + Send + Sync> {
-    accounts: Accounts<T>,
-    private_key: Location,
+    pub accounts: Accounts<T>,
+    pub private_key: Location,
 }
 
 impl<T> UseSecret<1> for Web3Address<T>
