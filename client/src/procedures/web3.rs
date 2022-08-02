@@ -29,7 +29,7 @@ impl<T> Procedure for Web3Procedures<T>
 where
     T: web3::Transport + Send + Sync,
 {
-    type Output = ProcedureOutput;
+    type Output = Vec<u8>;
 
     fn execute<R: Runner>(self, runner: &R) -> Result<Self::Output, ProcedureError> {
         use Web3Procedures::*;
