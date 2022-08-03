@@ -67,15 +67,25 @@ where
     type Output = Vec<u8>;
 
     fn use_secret(self, guard: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
-        let pk = secp256k1::SecretKey::from_slice(&guard[0].borrow())?;
-        let pk_ref = SecretKeyRef(&pk);
+        let mut buffer = guard[0].borrow().to_vec();
 
-        let signed_tx = futures::executor::block_on(self.accounts.sign_transaction(self.tx, pk_ref))
-            .map_err(|e| FatalProcedureError::from(format!("Failed to sign tx: {:?}", e.to_string())))?;
+        if buffer.len() < secp256k1::SECRET_KEY_LENGTH {
+            return Err(FatalProcedureError::from(format!(
+                "Key contains too few bytes: {}",
+                buffer.len()
+            )));
+        } else {
+            buffer.truncate(secp256k1::SECRET_KEY_LENGTH);
+            let pk = secp256k1::SecretKey::from_slice(&buffer)?;
+            let pk_ref = SecretKeyRef(&pk);
+            let signed_tx = futures::executor::block_on(self.accounts.sign_transaction(self.tx, pk_ref))
+                .map_err(|e| FatalProcedureError::from(format!("Failed to sign tx: {:?}", e.to_string())))?;
 
-        let tx_ref: SignedTx = signed_tx.into();
+            let tx_ref: SignedTx = signed_tx.into();
 
-        bincode::serialize(&tx_ref).map_err(|_| FatalProcedureError::from("Unable to serialize transaction".to_owned()))
+            bincode::serialize(&tx_ref)
+                .map_err(|_| FatalProcedureError::from("Unable to serialize transaction".to_owned()))
+        }
     }
 
     fn source(&self) -> [Location; 1] {
@@ -96,11 +106,9 @@ where
     type Output = Vec<u8>;
 
     fn use_secret(self, guard: [Buffer<u8>; 1]) -> Result<Self::Output, FatalProcedureError> {
-        let pk = secp256k1::SecretKey::from_slice(&guard[0].borrow())?;
-        let pk_ref = SecretKeyRef(&pk);
-        let address = pk_ref.address();
+        let buffer = guard[0].borrow();
 
-        Ok(address.as_bytes().to_vec())
+        extract_key(buffer.to_vec())
     }
 
     fn source(&self) -> [Location; 1] {
@@ -198,6 +206,21 @@ fn keccak256(bytes: &[u8]) -> [u8; 32] {
     hasher.update(bytes);
     hasher.finalize(&mut output);
     output
+}
+
+fn extract_key(mut buffer: Vec<u8>) -> Result<Vec<u8>, FatalProcedureError> {
+    if buffer.len() < secp256k1::SECRET_KEY_LENGTH {
+        return Err(FatalProcedureError::from(format!(
+            "Key contains too few bytes: {}",
+            buffer.len()
+        )));
+    } else {
+        buffer.truncate(secp256k1::SECRET_KEY_LENGTH);
+        let pk = secp256k1::SecretKey::from_slice(&buffer)?;
+        let pk_ref = SecretKeyRef(&pk);
+        let address = pk_ref.address();
+        Ok(address.as_bytes().to_vec())
+    }
 }
 
 impl From<SignedTransaction> for SignedTx {
@@ -373,18 +396,37 @@ mod web3_tests {
         let web3 = web3::Web3::new(transport.clone());
         let accounts = web3.accounts();
         let chain_id = 77777;
+        let client_path = b"client_path".to_vec();
 
         let stronghold = crate::Stronghold::default();
-        let client: Client = stronghold.create_client(b"client_path").unwrap();
+        let client: Client = stronghold.create_client(&client_path).unwrap();
 
-        let keypair_location = Location::generic("Secp256k1", "keypair");
+        let seed_location = Location::generic("Secp256k1", "seed");
+        let keypair_location = Location::generic("Secp256k1", "keys");
 
-        let gen_key = crate::procedures::GenerateKey {
-            ty: crate::procedures::KeyType::Secp256k1,
+        let proc = crate::procedures::BIP39Generate {
+            passphrase: None,
+            language: crate::procedures::MnemonicLanguage::English,
+            output: seed_location.clone(),
+        };
+
+        client.execute_procedure(proc).unwrap();
+
+        stronghold.write_client(&client_path).unwrap();
+
+        let proc = crate::procedures::Slip10Derive {
+            input: crate::procedures::Slip10DeriveInput::Key(seed_location.clone()),
+            curve: crypto::keys::slip10::Curve::Secp256k1,
+            chain: crypto::keys::slip10::Chain::from_u32_hardened(vec![44, 60, 0, 0]),
             output: keypair_location.clone(),
         };
 
-        client.execute_procedure(gen_key).unwrap();
+        client.execute_procedure(proc).unwrap();
+        stronghold.write_client(&client_path).unwrap();
+        let client = stronghold.load_client(&client_path).unwrap();
+
+        let b = client.record_exists(&keypair_location.clone()).unwrap();
+        println!("{:?}", b);
 
         let proc_address = Web3Address {
             accounts: accounts.clone(),
@@ -392,9 +434,11 @@ mod web3_tests {
         };
 
         let res = client.execute_web3_procedure(proc_address).unwrap();
+
         let res: Vec<u8> = res.into();
         let mut bytes = [0u8; 20];
         bytes.copy_from_slice(&res);
+        println!("bytes {:?}", bytes);
 
         let from = Address::from(&bytes);
         let to = "0x0123456789012345678901234567890123456789";
