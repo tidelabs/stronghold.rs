@@ -1,22 +1,20 @@
 // Copyright 2020-2021 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
-
-#![cfg(feature = "relay")]
-
 use core::fmt;
 use futures::{
     channel::mpsc::{self, Receiver},
-    future, StreamExt,
+    future, FutureExt, StreamExt,
 };
 #[cfg(not(feature = "tcp-transport"))]
 use libp2p::tcp::TokioTcpConfig;
 use p2p::{
-    assemble_relayed_addr, firewall::FirewallConfiguration, ChannelSinkConfig, EventChannel, Multiaddr, NetworkEvent,
-    PeerId, StrongholdP2p, StrongholdP2pBuilder,
+    assemble_relayed_addr, firewall::FirewallRules, ChannelSinkConfig, EventChannel, Multiaddr, NetworkEvent, PeerId,
+    StrongholdP2p, StrongholdP2pBuilder,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tokio::runtime::Builder;
+use stronghold_utils::random::random;
+use tokio::time::sleep;
 
 type TestPeer = StrongholdP2p<Request, Response>;
 
@@ -30,15 +28,23 @@ async fn init_peer() -> (mpsc::Receiver<NetworkEvent>, TestPeer) {
     let (dummy_fw_tx, _) = mpsc::channel(10);
     let (dummy_rq_channel, _) = EventChannel::new(10, ChannelSinkConfig::DropLatest);
     let (event_channel, event_rx) = EventChannel::new(10, ChannelSinkConfig::Block);
-    let builder = StrongholdP2pBuilder::new(dummy_fw_tx, dummy_rq_channel, Some(event_channel))
-        .with_firewall_config(FirewallConfiguration::allow_all())
-        .with_connection_timeout(Duration::from_millis(1));
+    let builder = StrongholdP2pBuilder::new(
+        dummy_fw_tx,
+        dummy_rq_channel,
+        Some(event_channel),
+        FirewallRules::allow_all(),
+    )
+    .with_mdns_support(false)
+    .with_connection_timeout(Duration::from_millis(1));
     #[cfg(not(feature = "tcp-transport"))]
     let peer = {
         let executor = |fut| {
             tokio::spawn(fut);
         };
-        builder.build_with_transport(TokioTcpConfig::new(), executor).await
+        builder
+            .build_with_transport(TokioTcpConfig::new(), executor)
+            .await
+            .unwrap()
     };
     #[cfg(feature = "tcp-transport")]
     let peer = builder.build().await.unwrap();
@@ -46,7 +52,7 @@ async fn init_peer() -> (mpsc::Receiver<NetworkEvent>, TestPeer) {
 }
 
 fn rand_bool(n: u8) -> bool {
-    rand::random::<u8>() % n > 0
+    random::<u8>() % n > 0
 }
 
 #[derive(Debug)]
@@ -82,15 +88,15 @@ struct TestSourceConfig {
 
 impl TestSourceConfig {
     fn random() -> Self {
-        let set_relay = match rand::random::<u8>() % 10 {
+        let set_relay = match random::<u8>() % 10 {
             0 | 1 | 2 | 3 => UseRelay::Default,
             4 | 5 | 6 => UseRelay::UseSpecificRelay,
             7 | 8 | 9 => UseRelay::NoRelay,
             _ => unreachable!(),
         };
-        let knows_direct_target_addr = cfg!(feature = "mdns").then(|| true).unwrap_or_else(|| rand_bool(5));
-        let knows_relayed_target_addr = cfg!(feature = "mdns").then(|| true).unwrap_or_else(|| rand_bool(5));
-        let knows_relay_addr = cfg!(feature = "mdns").then(|| true).unwrap_or_else(|| rand_bool(5));
+        let knows_direct_target_addr = rand_bool(5);
+        let knows_relayed_target_addr = rand_bool(5);
+        let knows_relay_addr = rand_bool(5);
         TestSourceConfig {
             knows_direct_target_addr,
             knows_relayed_target_addr,
@@ -132,9 +138,9 @@ impl fmt::Display for TestConfig {
 impl TestConfig {
     async fn new(relay_id: PeerId, relay_addr: Multiaddr) -> Self {
         let (source_event_rx, source_peer) = init_peer().await;
-        let source_id = source_peer.get_peer_id();
+        let source_id = source_peer.peer_id();
         let (target_event_rx, target_peer) = init_peer().await;
-        let target_id = target_peer.get_peer_id();
+        let target_id = target_peer.peer_id();
         TestConfig {
             source_config: TestSourceConfig::random(),
             source_peer,
@@ -159,7 +165,7 @@ impl TestConfig {
                 .await
                 .unwrap();
 
-            let mut target_listeners = self.target_peer.get_listeners().await;
+            let mut target_listeners = self.target_peer.listeners().await;
             assert_eq!(target_listeners.len(), 1);
             let target_listener = target_listeners.pop().unwrap();
             assert!(target_listener.uses_relay.is_none());
@@ -174,7 +180,7 @@ impl TestConfig {
                 .await
                 .unwrap();
 
-            let target_listeners = self.target_peer.get_listeners().await;
+            let target_listeners = self.target_peer.listeners().await;
             let mut expected_len = 1;
             self.target_config.listening_plain.then(|| expected_len = 2);
             assert_eq!(target_listeners.len(), expected_len);
@@ -204,18 +210,23 @@ impl TestConfig {
                 .await;
         }
         if self.source_config.knows_relay {
-            let addr = self.source_peer.add_dialing_relay(self.relay_id, None).await;
+            let addr = self.source_peer.add_dialing_relay(self.relay_id, None).await.unwrap();
             assert_eq!(addr.is_some(), self.source_config.knows_relay_addr);
         }
 
         match self.source_config.set_relay {
             UseRelay::Default => {}
-            UseRelay::NoRelay => self.source_peer.set_relay_fallback(self.target_id, false).await,
+            UseRelay::NoRelay => self
+                .source_peer
+                .set_relay_fallback(self.target_id, false)
+                .await
+                .unwrap(),
             UseRelay::UseSpecificRelay => {
                 let addr = self
                     .source_peer
                     .use_specific_relay(self.target_id, self.relay_id, true)
-                    .await;
+                    .await
+                    .unwrap();
                 if self.source_config.knows_relay_addr && self.source_config.knows_relay {
                     assert_eq!(
                         addr.unwrap(),
@@ -278,9 +289,7 @@ impl TestConfig {
             }
         }
         // if mdns is enabled, there is a chance that the source received the target address via the mdns service
-        if !cfg!(feature = "mdns") {
-            assert!(res.is_err(), "Unexpected Event {:?} on config {}", res, config_str);
-        }
+        assert!(res.is_err(), "Unexpected Event {:?} on config {}", res, config_str);
     }
 
     async fn try_direct(&mut self, config_str: &str) -> bool {
@@ -323,16 +332,16 @@ impl TestConfig {
     }
 }
 
-#[test]
-fn test_dialing() {
-    let task = async {
+#[tokio::test]
+async fn test_dialing() {
+    let run_test = async {
         let (_, mut relay_peer) = init_peer().await;
-        let relay_id = relay_peer.get_peer_id();
+        let relay_id = relay_peer.peer_id();
         let relay_addr = relay_peer
             .start_listening("/ip4/0.0.0.0/tcp/0".parse().unwrap())
             .await
             .unwrap();
-        let mut relay_listeners = relay_peer.get_listeners().await;
+        let mut relay_listeners = relay_peer.listeners().await;
         assert_eq!(relay_listeners.len(), 1);
         let relay_listener = relay_listeners.pop().unwrap();
         assert!(relay_listener.uses_relay.is_none());
@@ -344,6 +353,9 @@ fn test_dialing() {
             test.test_dial().await;
         }
     };
-    let rt = Builder::new_current_thread().enable_all().build().unwrap();
-    rt.block_on(task);
+
+    futures::select! {
+        _ = run_test.fuse() => {},
+        _ = sleep(Duration::from_secs(60)).fuse() => panic!("Test timed out"),
+    }
 }

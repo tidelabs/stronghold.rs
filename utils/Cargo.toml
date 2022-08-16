@@ -1,12 +1,11 @@
 [package]
 name = "stronghold-utils"
-version = "0.3.0"
-publish = false
+version = "0.4.1"
 authors = [
   "IOTA Stiftung",
   "tensor-programming <tensordeveloper@gmail.com>"
 ]
-edition = "2018"
+edition = "2021"
 license = "Apache-2.0"
 description = "Utils for the iota_stronghold library"
 homepage = "https://stronghold.docs.iota.org"
@@ -17,4 +16,4 @@ rand = "0.8.3"
 
   [dependencies.stronghold-derive]
   path = "../derive"
-  version = "0.2.0"
+  version = "0.3.1"

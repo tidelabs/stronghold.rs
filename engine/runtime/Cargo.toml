@@ -1,26 +1,43 @@
 [package]
 name = "stronghold-runtime"
-version = "0.3.0"
-publish = false
-authors = [
-  "IOTA Stiftung",
-  "tensor-programming <tensordeveloper@gmail.com>"
-]
-edition = "2018"
-license = "Apache-2.0"
-description = "Runtime and allocation primitives for stronghold"
+version = "0.5.2"
+authors = [ "IOTA Stiftung", "Alexandre Dang <alexandre.dang@iota.org" ]
+edition = "2021"
 readme = "README.md"
+license = "Apache-2.0"
+description = "Data structures for memory protection at runtime"
+repository = "https://github.com/iotaledger/stronghold.rs"
+homepage = "https://wiki.iota.org/stronghold.rs/getting_started"
+documentation = "https://wiki.iota.org/stronghold.rs/getting_started"
 keywords = [ "iota", "stronghold", "security" ]
 categories = [ "security" ]
-homepage = "https://stronghold.docs.iota.org"
-repository = "https://github.com/iotaledger/stronghold.rs"
 
 [lib]
 name = "runtime"
 
 [dependencies]
-libsodium-sys = "0.2"
-serde = "1.0"
+libc                    = { version = "0.2" }
+log                     = { version = "0.4.17" }
+zeroize = { version = "1.4.3" }
+libsodium-sys = { version = "0.2" }
+serde = { version = "1.0", features = [ "derive" ] }
+random = { version = "0.8.4", package = "rand" }
+dirs = { version = "4.0.0" }
+thiserror = { version = "1.0" }
+iota-crypto = { version = "0.12.1", features = [ "blake2b" ] }
+
+[target.'cfg(windows)'.dependencies]
+windows                 = { version = "0.36.0", features = ["Win32_System_Memory", "Win32_System_SystemInformation", "Win32_System_Diagnostics_Debug", "Win32_Foundation", "Win32_Security"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+nix                     = { version = "0.24.1" }
 
 [dev-dependencies]
-quickcheck = "1.0"
+serde_json              = { version = "1.0" }
+env_logger              = { version = "0.9" }
+dhat                    = { version = "0.3" }
+criterion = "0.3.3"
+
+[[bench]]
+name = "runtime_bench"
+harness = false

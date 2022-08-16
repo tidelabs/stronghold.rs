@@ -1,9 +1,8 @@
 [package]
 name = "fuzz"
 version = "0.1.0"
-publish = false
 authors = ["tensor-programming <tensordeveloper@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,12 +15,12 @@ rand = "0.8.3"
 
 [dependencies.stronghold_engine]
 path = "../"
-version = "0.4"
+version = "0.5.2"
 
 [dependencies.iota-crypto]
 git = "https://github.com/tidelabs/crypto.rs"
 branch = "dev"
-features = [ "random", "chacha" ]
+features = [ "random", "chacha"]
 
 [dependencies.generic-array]
 version = "0.14.4"

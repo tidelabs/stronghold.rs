@@ -6,8 +6,11 @@ use crypto::{
     utils::rand::fill,
 };
 
+use zeroize::Zeroize;
+
 use engine::vault::{BoxProvider, Key};
-#[derive(Ord, PartialEq, Eq, PartialOrd)]
+
+#[derive(Ord, PartialEq, Eq, PartialOrd, Zeroize, Clone)]
 pub struct Provider;
 impl Provider {
     const NONCE_LEN: usize = XChaCha20Poly1305::NONCE_LENGTH;
@@ -15,6 +18,8 @@ impl Provider {
 }
 
 impl BoxProvider for Provider {
+    type Error = crypto::Error;
+
     fn box_key_len() -> usize {
         32
     }
@@ -23,7 +28,7 @@ impl BoxProvider for Provider {
         Self::NONCE_LEN + Self::TAG_LEN
     }
 
-    fn box_seal(key: &Key<Self>, ad: &[u8], data: &[u8]) -> engine::Result<Vec<u8>> {
+    fn box_seal(key: &Key<Self>, ad: &[u8], data: &[u8]) -> Result<Vec<u8>, Self::Error> {
         let mut cipher = vec![0u8; data.len()];
 
         let mut tag = vec![0u8; 16];
@@ -31,31 +36,29 @@ impl BoxProvider for Provider {
 
         Self::random_buf(&mut nonce)?;
 
-        let key = key.bytes();
+        let key = &key.key;
 
-        XChaCha20Poly1305::try_encrypt(&key, &nonce, ad, data, &mut cipher, &mut tag)
-            .map_err(|_| engine::Error::ProviderError(String::from("Unable to seal data")))?;
+        XChaCha20Poly1305::try_encrypt(&*key.borrow(), &nonce, ad, data, &mut cipher, &mut tag)?;
 
         let r#box = [tag.to_vec(), nonce.to_vec(), cipher].concat();
 
         Ok(r#box)
     }
 
-    fn box_open(key: &Key<Self>, ad: &[u8], data: &[u8]) -> engine::Result<Vec<u8>> {
+    fn box_open(key: &Key<Self>, ad: &[u8], data: &[u8]) -> Result<Vec<u8>, Self::Error> {
         let (tag, ct) = data.split_at(Self::TAG_LEN);
         let (nonce, cipher) = ct.split_at(Self::NONCE_LEN);
 
         let mut plain = vec![0; cipher.len()];
 
-        let key = key.bytes();
+        let key = &key.key;
 
-        XChaCha20Poly1305::try_decrypt(&key, nonce, ad, &mut plain, cipher, tag)
-            .map_err(|_| engine::Error::ProviderError(String::from("Unable to unlock data")))?;
+        XChaCha20Poly1305::try_decrypt(&*key.borrow(), nonce, ad, &mut plain, cipher, tag)?;
 
         Ok(plain)
     }
 
-    fn random_buf(buf: &mut [u8]) -> engine::Result<()> {
-        fill(buf).map_err(|_| engine::Error::ProviderError(String::from("Can't generate random Bytes")))
+    fn random_buf(buf: &mut [u8]) -> Result<(), Self::Error> {
+        fill(buf)
     }
 }

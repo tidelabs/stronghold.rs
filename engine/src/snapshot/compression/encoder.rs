@@ -1,8 +1,6 @@
 // Copyright 2020-2021 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-use std::convert::TryInto;
-
 use super::{Block, Duplicate};
 
 /// Dictionary size.
@@ -70,8 +68,8 @@ impl<'a> Lz4Encoder<'a> {
     fn get(&self, n: usize) -> u32 {
         debug_assert!(self.remaining(), "Reading a partial batch.");
 
-        // Should never fail.
-        u32::from_ne_bytes(self.input[n..n + 4].try_into().unwrap())
+        let bytes = self.input[n..n + 4].try_into().expect("Conversion can never fail.");
+        u32::from_ne_bytes(bytes)
     }
 
     fn get_at_cursor(&self) -> u32 {
