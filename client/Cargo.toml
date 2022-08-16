@@ -38,8 +38,8 @@ tiny-keccak = {version = "2.0", optional = true}
 
 
 [dependencies.iota-crypto]
-git = "https://tributary.semantic-network.tech/semnet/Libs/crypto.rs"
-branch = "feat/update-v8"
+git = "https://github.com/tidelabs/crypto.rs"
+branch = "dev"
 features = [
   "aes-gcm",
   "aes-kw",
