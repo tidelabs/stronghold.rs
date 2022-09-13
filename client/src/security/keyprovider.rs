@@ -256,7 +256,14 @@ impl KeyProvider {
     where
         P: AsRef<[u8]> + Zeroize,
     {
-        let config = argon2::Config::default();
+        let config = argon2::Config {
+            lanes: 2,
+            mem_cost: 50_000,
+            time_cost: 30,
+            thread_mode: argon2::ThreadMode::from_threads(2),
+            variant: argon2::Variant::Argon2id,
+            ..Default::default()
+        };
 
         let key = argon2::hash_raw(passphrase.as_ref(), salt.as_ref(), &config)
             .map_err(|e| ClientError::Inner(e.to_string()))?;
