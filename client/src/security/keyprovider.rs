@@ -256,11 +256,17 @@ impl KeyProvider {
     where
         P: AsRef<[u8]> + Zeroize,
     {
+        use std::thread::available_parallelism;
+
+        let threads = available_parallelism()
+            .map_err(|e| ClientError::Inner(e.to_string()))?
+            .get();
+
         let config = argon2::Config {
             lanes: 2,
             mem_cost: 50_000,
             time_cost: 30,
-            thread_mode: argon2::ThreadMode::from_threads(2),
+            thread_mode: argon2::ThreadMode::from_threads(threads as u32),
             variant: argon2::Variant::Argon2id,
             ..Default::default()
         };
