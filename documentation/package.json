@@ -11,7 +11,7 @@
     "node": ">=14.14.0"
   },
   "dependencies": {
-    "remark-code-import": "^0.3.0",
+    "remark-code-import": "^0.4.0",
     "remark-import-partial": "^0.0.2",
     "remark-remove-comments": "^0.2.0"
   },
