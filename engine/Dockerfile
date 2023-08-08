@@ -31,7 +31,7 @@ RUN cd vault/fuzz && RUSTFLAGS=-Clinker=musl-gcc cargo build --release --target=
 # ------------------------------------------------------------------------------
 
 
-FROM alpine:latest
+FROM alpine:3.18.3
 
 RUN addgroup -g 1000 engine
 
